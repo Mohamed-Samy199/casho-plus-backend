@@ -29,3 +29,5 @@ temp/
 # ── Build ─────────────────────────────────────────────────────
 dist/
 build/
+uploads/*
+!uploads/.gitkeep

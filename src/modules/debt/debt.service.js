@@ -177,3 +177,16 @@ export async function repayDebt({
 export async function listDebtPayments(debtId) {
   return DebtPayment.find({ debt: debtId }).sort({ createdAt: -1 }).lean();
 }
+
+/**
+ * إضافة إيصالات/مستندات إثبات لدين موجود
+ */
+export async function addReceipts(debtId, urls) {
+  const debt = await Debt.findByIdAndUpdate(
+    debtId,
+    { $push: { receiptUrls: { $each: urls } } },
+    { new: true }
+  );
+  if (!debt) throw ApiError.notFound("الدين غير موجود.");
+  return debt;
+}

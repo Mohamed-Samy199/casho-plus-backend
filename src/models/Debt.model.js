@@ -19,6 +19,9 @@ const debtSchema = new mongoose.Schema(
     dueDate: { type: Date },
     settledAt: { type: Date },
 
+    // إيصالات/مستندات إثبات مرفقة بالدين (اختياري)
+    receiptUrls: { type: [String], default: [] },
+
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
   },
   { timestamps: true }

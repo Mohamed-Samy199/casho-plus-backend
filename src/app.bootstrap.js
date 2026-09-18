@@ -17,6 +17,7 @@ import commissionRuleRoutes from "./modules/commission-rule/commission-rule.rout
 import dashboardRoutes from "./modules/dashboard/dashboard.routes.js";
 import notificationRoutes from "./modules/notification/notification.routes.js";
 import attendanceRoutes from "./modules/attendance/attendance.routes.js";
+import { UPLOADS_ROOT } from "./middlewares/upload.middleware.js";
 
 import { ApiError } from "./utils/ApiError.js";
 import { generalLimiter } from "./middlewares/rateLimit.middleware.js";
@@ -84,6 +85,9 @@ app.use("/api", generalLimiter);
 if (process.env.NODE_ENV === process.env.DEVELOPMENT) {
   app.use(morgan("dev"));
 }
+
+// ── الملفات المرفوعة محليًا (إيصالات الديون وغيرها لاحقًا) ─────
+app.use("/uploads", express.static(UPLOADS_ROOT));
 
 // ── Routes ────────────────────────────────────────────────────
 app.use("/api/auth", authRoutes);
