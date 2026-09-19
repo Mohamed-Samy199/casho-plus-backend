@@ -1,5 +1,6 @@
 import Partner from "../../models/Partner.model.js";
 import Wallet from "../../models/Wallet.model.js";
+import { Channel } from "../../utils/common/index.js";
 import { ApiError } from "../../utils/ApiError.js";
 import { create, find, findById, findOne, findOneAndUpdate } from "../../db/database.repository.js";
 
@@ -12,10 +13,23 @@ export async function createPartner({ name, phoneNumbers }, userId) {
     if (existing) throw ApiError.conflict("رقم التلفون مستخدم بالفعل مع شريك آخر.");
   }
 
-  return create({
+  const partner = await create({
     model: Partner,
     data: { name, phoneNumbers, createdBy: userId },
   });
+
+  // كل رقم للشريك له Wallet مستقلة من لحظة تسجيله، حتى قبل أول عملية.
+  if (phoneNumbers?.length) {
+    await Wallet.insertMany(
+      phoneNumbers.map((phoneNumber) => ({
+        partner: partner._id,
+        channel: Channel.VODAFONE_CASH,
+        phoneNumber,
+      }))
+    );
+  }
+
+  return partner;
 }
 
 export async function listPartners({ isActive } = {}) {
@@ -67,6 +81,12 @@ export async function addPhoneNumber(partnerId, phone) {
   partner.phoneNumbers = [...(partner.phoneNumbers || []), phone];
   await partner.save();
 
+  await Wallet.create({
+    partner: partner._id,
+    channel: Channel.VODAFONE_CASH,
+    phoneNumber: phone,
+  });
+
   return partner;
 }
 
@@ -74,8 +94,18 @@ export async function removePhoneNumber(partnerId, phone) {
   const partner = await findById({ model: Partner, id: partnerId, options: { lean: false } });
   if (!partner) throw ApiError.notFound("الشريك غير موجود.");
 
+  const wallet = await Wallet.findOne({
+    partner: partnerId,
+    phoneNumber: phone,
+  });
+  if (wallet && (wallet.liquidityBalance > 0 || wallet.walletBalance > 0)) {
+    throw ApiError.badRequest("لا يمكن حذف رقم عليه رصيد. صفّر الرصيد أولًا.");
+  }
+
   partner.phoneNumbers = (partner.phoneNumbers || []).filter((p) => p !== phone);
   await partner.save();
+
+  if (wallet) await Wallet.deleteOne({ _id: wallet._id });
 
   return partner;
 }

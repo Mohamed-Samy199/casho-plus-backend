@@ -1,6 +1,10 @@
+import mongoose from "mongoose";
 import Wallet from "../../models/Wallet.model.js";
+import Partner from "../../models/Partner.model.js";
 import Debt from "../../models/Debt.model.js";
-import { DebtDirection, DebtStatus } from "../../utils/common/index.js";
+import BalanceAdjustment from "../../models/BalanceAdjustment.model.js";
+import { ApiError } from "../../utils/ApiError.js";
+import { Channel, DebtDirection, DebtStatus } from "../../utils/common/index.js";
 
 /**
  * ملخص رأس المال الكلي:
@@ -82,4 +86,94 @@ export async function getCapitalByPartner() {
   }
 
   return Array.from(byPartner.values());
+}
+
+/**
+ * تعيين الرصيد الافتتاحي لرقم شريك.
+ * القيم هنا بالقرش، والعملية متاحة للأدمن فقط من خلال الـ route.
+ */
+export async function adjustBalance({
+  partnerId,
+  channel = Channel.VODAFONE_CASH,
+  phoneNumber,
+  liquidityAmount,
+  walletAmount,
+  note,
+  userId,
+}) {
+  if (liquidityAmount === 0 && walletAmount === 0) {
+    throw ApiError.badRequest("يجب إدخال قيمة أكبر من صفر في السيولة أو رصيد المحفظة.");
+  }
+  const partner = await Partner.findById(partnerId).lean();
+  if (!partner) throw ApiError.notFound("الشريك غير موجود.");
+  if (!partner.phoneNumbers?.includes(phoneNumber)) {
+    throw ApiError.badRequest("رقم التلفون غير تابع لهذا الشريك.");
+  }
+
+  const session = await mongoose.startSession();
+  try {
+    let result;
+    await session.withTransaction(async () => {
+      let wallet = await Wallet.findOne({ partner: partnerId, channel, phoneNumber }).session(
+        session
+      );
+      if (!wallet) {
+        wallet = new Wallet({ partner: partnerId, channel, phoneNumber });
+      }
+
+      const liquidityBefore = wallet.liquidityBalance || 0;
+      const walletBefore = wallet.walletBalance || 0;
+      const hasPreviousHistory = await BalanceAdjustment.exists({
+        partner: partnerId,
+        channel,
+        phoneNumber,
+      }).session(session);
+      const mode = hasPreviousHistory ? "add" : "opening";
+      const liquidityAfter = liquidityBefore + liquidityAmount;
+      const walletAfter = walletBefore + walletAmount;
+
+      wallet.liquidityBalance = liquidityAfter;
+      wallet.walletBalance = walletAfter;
+      await wallet.save({ session });
+
+      const [history] = await BalanceAdjustment.create(
+        [
+          {
+            partner: partnerId,
+            wallet: wallet._id,
+            channel,
+            phoneNumber,
+            mode,
+            liquidityBefore,
+            walletBefore,
+            liquidityAmount,
+            walletAmount,
+            liquidityAfter,
+            walletAfter,
+            note,
+            createdBy: userId,
+          },
+        ],
+        { session }
+      );
+
+      result = { wallet: wallet.toObject(), history: history.toObject() };
+    });
+    return result;
+  } finally {
+    await session.endSession();
+  }
+}
+
+export async function getBalanceHistory({ partnerId, phoneNumber, limit = 100 } = {}) {
+  const filter = {};
+  if (partnerId) filter.partner = partnerId;
+  if (phoneNumber) filter.phoneNumber = phoneNumber;
+
+  return BalanceAdjustment.find(filter)
+    .populate("partner", "name")
+    .populate("createdBy", "name email")
+    .sort({ createdAt: -1 })
+    .limit(Number(limit))
+    .lean();
 }

@@ -53,6 +53,8 @@ export const NotificationType = Object.freeze({
   SYSTEM: "system", // تنبيه عام من النظام
   PARTNER: "partner", // تنبيه مرتبط بشريك
   WALLET: "wallet", // تنبيه مرتبط بمحفظة
+  LOW_LIQUIDITY: "low_liquidity", // انخفاض سيولة رقم/شريحة
+  LOW_WALLET_BALANCE: "low_wallet_balance", // انخفاض رصيد المحفظة
   DEBT: "debt", // تنبيه مرتبط بدين
 });
 

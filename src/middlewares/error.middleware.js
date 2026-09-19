@@ -7,6 +7,16 @@ import { ApiError } from "../utils/ApiError.js";
 const errorMiddleware = (err, req, res, next) => {
   let error = err;
 
+  // MongoDB transactions تحتاج Replica Set أو MongoDB Atlas.
+  if (
+    err?.message?.includes("Transaction numbers are only allowed") ||
+    err?.message?.includes("replica set member")
+  ) {
+    error = ApiError.internal(
+      "تعذر تنفيذ العملية لأن اتصال قاعدة البيانات لا يدعم المعاملات الآمنة. استخدم MongoDB Atlas أو فعّل Replica Set ثم أعد المحاولة."
+    );
+  }
+
   // ── أخطاء Mongoose المعروفة ────────────────────────────
 
   // duplicate key (مثلاً رقم تلفون مسجّل قبل كده)
