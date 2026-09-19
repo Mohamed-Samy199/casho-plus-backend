@@ -1,5 +1,7 @@
 import mongoose from "mongoose";
 import Wallet from "../../models/Wallet.model.js";
+import User from "../../models/User.model.js";
+import Partner from "../../models/Partner.model.js";
 import Transaction from "../../models/Transaction.model.js";
 import { OperationStage } from "../../utils/common/index.js";
 import { ApiError } from "../../utils/ApiError.js";
@@ -24,6 +26,7 @@ export function calculateEffect({ stage, amount, commission = 0 }) {
 }
 
 export async function createTransaction({
+  accountType = "Partner",
   partnerId,
   channel,
   phoneNumber,
@@ -36,16 +39,26 @@ export async function createTransaction({
   notes,
   userId,
 }) {
+  const accountId = accountType === "User" ? userId : partnerId;
+  const AccountModel = accountType === "User" ? User : Partner;
+  const account = await AccountModel.findById(accountId).lean();
+  if (!account) throw ApiError.notFound(accountType === "User" ? "حساب الأدمن غير موجود." : "الشريك غير موجود.");
+  if (!account.phoneNumbers?.includes(phoneNumber)) {
+    throw ApiError.badRequest("رقم التلفون غير تابع للحساب المختار.");
+  }
   const session = await mongoose.startSession();
   try {
     let result;
     await session.withTransaction(async () => {
-      let wallet = await Wallet.findOne({ partner: partnerId, channel, phoneNumber }).session(
-        session
-      );
+      const walletFilter = accountType === "User"
+        ? { ownerType: "User", owner: accountId, channel, phoneNumber }
+        : { partner: accountId, channel, phoneNumber };
+      let wallet = await Wallet.findOne(walletFilter).session(session);
       if (!wallet) {
         const created = await Wallet.create(
-          [{ partner: partnerId, channel, phoneNumber }],
+          [accountType === "User"
+            ? { ownerType: "User", owner: accountId, channel, phoneNumber }
+            : { partner: accountId, channel, ownerType: "Partner", phoneNumber }],
           { session }
         );
         wallet = created[0];
@@ -80,7 +93,10 @@ export async function createTransaction({
 
       await checkLowBalanceAndNotify(
         {
-          partnerId,
+          partnerId: accountType === "Partner" ? accountId : null,
+          accountType,
+          accountId,
+          accountName: account.name,
           wallet: wallet._id,
           channel,
           phoneNumber,
@@ -93,7 +109,9 @@ export async function createTransaction({
       const [transaction] = await Transaction.create(
         [
           {
-            partner: partnerId,
+            ...(accountType === "User" ? {} : { partner: accountId }),
+            accountType,
+            account: accountId,
             wallet: wallet._id,
             channel,
             phoneNumber,

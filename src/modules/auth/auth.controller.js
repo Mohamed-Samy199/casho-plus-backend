@@ -35,6 +35,24 @@ export const changePassword = asyncHandler(async (req, res) => {
 });
 
 /**
+ * POST /api/auth/me/phones
+ * Protected — إضافة رقم للحساب الحالي
+ */
+export const addMyPhoneNumber = asyncHandler(async (req, res) => {
+  const user = await authService.addMyPhoneNumber(req.user._id, req.body.phone);
+  return ApiResponse.ok(res, "تم إضافة رقم التلفون بنجاح.", { user });
+});
+
+/**
+ * DELETE /api/auth/me/phones/:phone
+ * Protected — حذف رقم من الحساب الحالي
+ */
+export const removeMyPhoneNumber = asyncHandler(async (req, res) => {
+  const user = await authService.removeMyPhoneNumber(req.user._id, req.params.phone);
+  return ApiResponse.ok(res, "تم حذف رقم التلفون بنجاح.", { user });
+});
+
+/**
  * POST /api/auth/users
  * Admin only — إنشاء حساب موظف/أدمن جديد
  */

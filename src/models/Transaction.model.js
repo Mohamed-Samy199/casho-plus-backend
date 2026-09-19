@@ -4,7 +4,9 @@ import { Channel, OperationStage, PartyType } from "../utils/common/index.js";
 const transactionSchema = new mongoose.Schema(
   {
     // الشريك اللي محفظته/سيولته اتأثرت
-    partner: { type: mongoose.Schema.Types.ObjectId, ref: "Partner", required: true },
+    partner: { type: mongoose.Schema.Types.ObjectId, ref: "Partner" },
+    accountType: { type: String, enum: ["Partner", "User"], default: "Partner" },
+    account: { type: mongoose.Schema.Types.ObjectId, refPath: "accountType" },
     wallet: { type: mongoose.Schema.Types.ObjectId, ref: "Wallet", required: true },
     channel: { type: String, enum: Object.values(Channel), required: true },
     // الرقم/الشريحة المحددة اللي اتنفذت العملية من خلالها
@@ -39,5 +41,6 @@ const transactionSchema = new mongoose.Schema(
 
 transactionSchema.index({ partyType: 1, partyId: 1, createdAt: -1 });
 transactionSchema.index({ partner: 1, channel: 1, phoneNumber: 1, createdAt: -1 });
+transactionSchema.index({ accountType: 1, account: 1, createdAt: -1 });
 
 export default mongoose.model("Transaction", transactionSchema);

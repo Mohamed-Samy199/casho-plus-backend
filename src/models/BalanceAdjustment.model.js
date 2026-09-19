@@ -3,11 +3,9 @@ import { Channel } from "../utils/common/index.js";
 
 const balanceAdjustmentSchema = new mongoose.Schema(
   {
-    partner: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Partner",
-      required: true,
-    },
+    partner: { type: mongoose.Schema.Types.ObjectId, ref: "Partner" },
+    ownerType: { type: String, enum: ["Partner", "User"], default: "Partner" },
+    owner: { type: mongoose.Schema.Types.ObjectId, refPath: "ownerType" },
     wallet: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Wallet",
@@ -41,5 +39,6 @@ const balanceAdjustmentSchema = new mongoose.Schema(
 );
 
 balanceAdjustmentSchema.index({ partner: 1, phoneNumber: 1, createdAt: -1 });
+balanceAdjustmentSchema.index({ ownerType: 1, owner: 1, createdAt: -1 });
 
 export default mongoose.model("BalanceAdjustment", balanceAdjustmentSchema);

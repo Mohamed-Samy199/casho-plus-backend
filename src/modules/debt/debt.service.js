@@ -2,6 +2,8 @@ import mongoose from "mongoose";
 import Debt from "../../models/Debt.model.js";
 import DebtPayment from "../../models/DebtPayment.model.js";
 import Wallet from "../../models/Wallet.model.js";
+import Client from "../../models/Client.model.js";
+import Partner from "../../models/Partner.model.js";
 import { DebtStatus, DebtDirection, BalanceType } from "../../utils/common/index.js";
 import { ApiError } from "../../utils/ApiError.js";
 import { create, findById, paginate } from "../../db/database.repository.js";
@@ -15,6 +17,14 @@ export async function createDebt({
   dueDate,
   userId,
 }) {
+  const partyModel = partyType === "Client" ? Client : Partner;
+  const party = await partyModel.findById(partyId).select("_id").lean();
+  if (!party) {
+    throw ApiError.notFound(
+      partyType === "Client" ? "العميل المرتبط بالدين غير موجود." : "الشريك المرتبط بالدين غير موجود."
+    );
+  }
+
   return create({
     model: Debt,
     data: {

@@ -27,11 +27,10 @@ const debtSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-debtSchema.pre("validate", function (next) {
+debtSchema.pre("validate", function () {
   if (this.isNew && this.remainingAmount === undefined) {
     this.remainingAmount = this.amount;
   }
-  next();
 });
 
 debtSchema.index({ partyType: 1, partyId: 1, status: 1 });

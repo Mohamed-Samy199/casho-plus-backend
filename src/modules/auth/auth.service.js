@@ -113,6 +113,11 @@ export const removePhoneNumber = async (userId, phone) => {
   return user.toSafeObject();
 };
 
+// ── إدارة أرقام الحساب الحالي ───────────────────────────────────
+export const addMyPhoneNumber = (userId, phone) => addPhoneNumber(userId, phone);
+
+export const removeMyPhoneNumber = (userId, phone) => removePhoneNumber(userId, phone);
+
 // ── عرض كل المستخدمين (أدمن بس) ──────────────────────────────────
 export const listUsers = async () => {
   return find({ model: User, filter: {}, options: { sort: { createdAt: -1 }, lean: true } });

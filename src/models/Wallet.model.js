@@ -3,7 +3,9 @@ import { Channel } from "../utils/common/index.js";
 
 const walletSchema = new mongoose.Schema(
   {
-    partner: { type: mongoose.Schema.Types.ObjectId, ref: "Partner", required: true },
+    partner: { type: mongoose.Schema.Types.ObjectId, ref: "Partner" },
+    ownerType: { type: String, enum: ["Partner", "User"], default: "Partner" },
+    owner: { type: mongoose.Schema.Types.ObjectId, refPath: "ownerType" },
     channel: { type: String, enum: Object.values(Channel), required: true },
 
     // رقم التلفون/الشريحة المرتبط بالرصيد ده تحديدًا — كل رقم ليه رصيده الخاص
@@ -17,5 +19,6 @@ const walletSchema = new mongoose.Schema(
 
 // رصيد واحد بس لكل (شريك + قناة + رقم تلفون)
 walletSchema.index({ partner: 1, channel: 1, phoneNumber: 1 }, { unique: true });
+walletSchema.index({ ownerType: 1, owner: 1, channel: 1, phoneNumber: 1 }, { unique: true, sparse: true });
 
 export default mongoose.model("Wallet", walletSchema);

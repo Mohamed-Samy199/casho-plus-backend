@@ -1,6 +1,7 @@
 import Notification from "../../models/Notification.model.js";
 import Debt from "../../models/Debt.model.js";
 import Transaction from "../../models/Transaction.model.js";
+import Partner from "../../models/Partner.model.js";
 import {
   NotificationType,
   NotificationSeverity,
@@ -16,17 +17,30 @@ const THRESHOLD = Number(LOW_BALANCE_THRESHOLD) || 100000;
  * لو الرصيد بعد العملية تحت الحد الأدنى، بتسجل تنبيه.
  */
 export async function checkLowBalanceAndNotify(
-  { partnerId, wallet, channel, phoneNumber, newLiquidityBalance, newWalletBalance },
+  {
+    partnerId,
+    accountName,
+    wallet,
+    channel,
+    phoneNumber,
+    newLiquidityBalance,
+    newWalletBalance,
+  },
   session
 ) {
   const alerts = [];
+  const partner = partnerId
+    ? await Partner.findById(partnerId).select("name").session(session).lean()
+    : null;
+  const accountLabel = accountName || partner?.name;
+  const partnerLabel = accountLabel ? `${accountLabel} - ${phoneNumber}` : phoneNumber;
 
   if (newLiquidityBalance < THRESHOLD) {
     alerts.push({
       type: NotificationType.LOW_LIQUIDITY,
       severity: NotificationSeverity.WARNING,
       title: "رصيد سيولة منخفض",
-      message: `سيولة الرقم ${phoneNumber} وصلت لـ ${(newLiquidityBalance / 100).toLocaleString(
+      message: `سيولة ${partnerLabel} وصلت لـ ${(newLiquidityBalance / 100).toLocaleString(
         "ar-EG"
       )} جنيه.`,
       relatedEntityType: "Wallet",
@@ -39,7 +53,7 @@ export async function checkLowBalanceAndNotify(
       type: NotificationType.LOW_WALLET_BALANCE,
       severity: NotificationSeverity.WARNING,
       title: "رصيد محفظة منخفض",
-      message: `رصيد محفظة الرقم ${phoneNumber} وصل لـ ${(newWalletBalance / 100).toLocaleString(
+      message: `رصيد محفظة ${partnerLabel} وصل لـ ${(newWalletBalance / 100).toLocaleString(
         "ar-EG"
       )} جنيه.`,
       relatedEntityType: "Wallet",

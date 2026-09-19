@@ -65,14 +65,23 @@ export async function adminUpsertAttendance(
   adminId
 ) {
   const day = startOfDay(new Date(date));
+  const normalizedCheckIn = checkInAt ? new Date(checkInAt) : null;
+  let normalizedCheckOut = checkOutAt ? new Date(checkOutAt) : null;
+
+  // حماية إضافية للسجلات اليدوية القديمة/الواردة بنفس التاريخ:
+  // 03:00 م إلى 02:00 ص تعني أن الانصراف في اليوم التالي.
+  if (normalizedCheckIn && normalizedCheckOut && normalizedCheckOut < normalizedCheckIn) {
+    normalizedCheckOut = new Date(normalizedCheckOut);
+    normalizedCheckOut.setDate(normalizedCheckOut.getDate() + 1);
+  }
 
   const record = await Attendance.findOneAndUpdate(
     { user: userId, date: day },
     {
       user: userId,
       date: day,
-      ...(checkInAt !== undefined && { checkInAt: checkInAt ? new Date(checkInAt) : null }),
-      ...(checkOutAt !== undefined && { checkOutAt: checkOutAt ? new Date(checkOutAt) : null }),
+      ...(checkInAt !== undefined && { checkInAt: normalizedCheckIn }),
+      ...(checkOutAt !== undefined && { checkOutAt: normalizedCheckOut }),
       notes,
       recordedBy: adminId,
     },
@@ -114,13 +123,29 @@ export async function getMonthlyReport({ year, month }) {
     { $match: { date: { $gte: from, $lte: to }, checkInAt: { $ne: null } } },
     {
       $addFields: {
-        hoursWorked: {
-          $cond: [
-            { $and: ["$checkInAt", "$checkOutAt"] },
-            { $divide: [{ $subtract: ["$checkOutAt", "$checkInAt"] }, 1000 * 60 * 60] },
-            0,
-          ],
-        },
+          hoursWorked: {
+            $cond: [
+              { $and: ["$checkInAt", "$checkOutAt"] },
+              {
+                $divide: [
+                  {
+                    $subtract: [
+                      {
+                        $cond: [
+                          { $lt: ["$checkOutAt", "$checkInAt"] },
+                          { $add: ["$checkOutAt", 24 * 60 * 60 * 1000] },
+                          "$checkOutAt",
+                        ],
+                      },
+                      "$checkInAt",
+                    ],
+                  },
+                  1000 * 60 * 60,
+                ],
+              },
+              0,
+            ],
+          },
       },
     },
     {

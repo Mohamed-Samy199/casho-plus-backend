@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import Wallet from "../../models/Wallet.model.js";
 import Partner from "../../models/Partner.model.js";
+import User from "../../models/User.model.js";
 import Debt from "../../models/Debt.model.js";
 import BalanceAdjustment from "../../models/BalanceAdjustment.model.js";
 import { ApiError } from "../../utils/ApiError.js";
@@ -54,27 +55,35 @@ export async function getCapitalSummary() {
 }
 
 /**
- * تفاصيل رأس المال مقسّمة لكل شريك، ولكل رقم/شريحة على حدة
+ * تفاصيل رأس المال مقسّمة لكل شريك وأدمن، ولكل رقم/شريحة على حدة
  */
 export async function getCapitalByPartner() {
-  const wallets = await Wallet.find().populate("partner", "name phoneNumbers").lean();
+  const wallets = await Wallet.find()
+    .populate("partner", "name phoneNumbers")
+    .populate("owner", "name phoneNumbers email")
+    .lean();
 
-  const byPartner = new Map();
+  const byAccount = new Map();
 
   for (const wallet of wallets) {
-    const partnerId = wallet.partner?._id?.toString();
-    if (!partnerId) continue;
+    const isAdminWallet = wallet.ownerType === "User" && wallet.owner?._id;
+    const accountId = (isAdminWallet ? wallet.owner._id : wallet.partner?._id)?.toString();
+    if (!accountId) continue;
+    const accountType = isAdminWallet ? "User" : "Partner";
+    const mapKey = `${accountType}:${accountId}`;
 
-    if (!byPartner.has(partnerId)) {
-      byPartner.set(partnerId, {
-        partner: wallet.partner,
+    if (!byAccount.has(mapKey)) {
+      byAccount.set(mapKey, {
+        accountType,
+        account: isAdminWallet ? wallet.owner : wallet.partner,
+        partner: isAdminWallet ? null : wallet.partner,
         totalLiquidity: 0,
         totalWalletBalance: 0,
         lines: [],
       });
     }
 
-    const entry = byPartner.get(partnerId);
+    const entry = byAccount.get(mapKey);
     entry.lines.push({
       channel: wallet.channel,
       phoneNumber: wallet.phoneNumber,
@@ -85,7 +94,7 @@ export async function getCapitalByPartner() {
     entry.totalWalletBalance += wallet.walletBalance;
   }
 
-  return Array.from(byPartner.values());
+  return Array.from(byAccount.values());
 }
 
 /**
@@ -94,6 +103,8 @@ export async function getCapitalByPartner() {
  */
 export async function adjustBalance({
   partnerId,
+  ownerType = "Partner",
+  ownerId,
   channel = Channel.VODAFONE_CASH,
   phoneNumber,
   liquidityAmount,
@@ -104,27 +115,39 @@ export async function adjustBalance({
   if (liquidityAmount === 0 && walletAmount === 0) {
     throw ApiError.badRequest("يجب إدخال قيمة أكبر من صفر في السيولة أو رصيد المحفظة.");
   }
-  const partner = await Partner.findById(partnerId).lean();
-  if (!partner) throw ApiError.notFound("الشريك غير موجود.");
-  if (!partner.phoneNumbers?.includes(phoneNumber)) {
-    throw ApiError.badRequest("رقم التلفون غير تابع لهذا الشريك.");
+  const actualOwnerId = ownerId || partnerId;
+  const ownerModel = ownerType === "User" ? User : Partner;
+  const owner = await ownerModel.findById(actualOwnerId).lean();
+  if (!owner) throw ApiError.notFound(ownerType === "User" ? "المستخدم غير موجود." : "الشريك غير موجود.");
+  if (!owner.phoneNumbers?.includes(phoneNumber)) {
+    throw ApiError.badRequest("رقم التلفون غير تابع لهذا الحساب.");
   }
 
   const session = await mongoose.startSession();
   try {
     let result;
     await session.withTransaction(async () => {
-      let wallet = await Wallet.findOne({ partner: partnerId, channel, phoneNumber }).session(
-        session
-      );
+      const walletFilter =
+        ownerType === "User"
+          ? { ownerType: "User", owner: actualOwnerId, channel, phoneNumber }
+          : { partner: actualOwnerId, channel, phoneNumber };
+      let wallet = await Wallet.findOne(walletFilter).session(session);
       if (!wallet) {
-        wallet = new Wallet({ partner: partnerId, channel, phoneNumber });
+        wallet = new Wallet({
+          ...(ownerType === "User"
+            ? { ownerType: "User", owner: actualOwnerId }
+            : { partner: actualOwnerId, ownerType: "Partner" }),
+          channel,
+          phoneNumber,
+        });
       }
 
       const liquidityBefore = wallet.liquidityBalance || 0;
       const walletBefore = wallet.walletBalance || 0;
       const hasPreviousHistory = await BalanceAdjustment.exists({
-        partner: partnerId,
+        ...(ownerType === "User"
+          ? { ownerType: "User", owner: actualOwnerId }
+          : { partner: actualOwnerId }),
         channel,
         phoneNumber,
       }).session(session);
@@ -139,7 +162,9 @@ export async function adjustBalance({
       const [history] = await BalanceAdjustment.create(
         [
           {
-            partner: partnerId,
+            ...(ownerType === "User"
+              ? { ownerType: "User", owner: actualOwnerId }
+              : { partner: actualOwnerId }),
             wallet: wallet._id,
             channel,
             phoneNumber,
@@ -172,6 +197,34 @@ export async function getBalanceHistory({ partnerId, phoneNumber, limit = 100 } 
 
   return BalanceAdjustment.find(filter)
     .populate("partner", "name")
+    .populate("createdBy", "name email")
+    .sort({ createdAt: -1 })
+    .limit(Number(limit))
+    .lean();
+}
+
+export async function getMyCapital(userId) {
+  const wallets = await Wallet.find({ ownerType: "User", owner: userId }).lean();
+  return wallets.reduce(
+    (summary, wallet) => ({
+      liquidity: summary.liquidity + wallet.liquidityBalance,
+      walletBalance: summary.walletBalance + wallet.walletBalance,
+      lines: [
+        ...summary.lines,
+        {
+          channel: wallet.channel,
+          phoneNumber: wallet.phoneNumber,
+          liquidityBalance: wallet.liquidityBalance,
+          walletBalance: wallet.walletBalance,
+        },
+      ],
+    }),
+    { liquidity: 0, walletBalance: 0, lines: [] }
+  );
+}
+
+export async function getMyBalanceHistory(userId, limit = 100) {
+  return BalanceAdjustment.find({ ownerType: "User", owner: userId })
     .populate("createdBy", "name email")
     .sort({ createdAt: -1 })
     .limit(Number(limit))

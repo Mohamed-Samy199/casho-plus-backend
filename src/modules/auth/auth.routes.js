@@ -20,6 +20,8 @@ router.post("/login", authLimiter, validate(loginSchema), authController.login);
 // ── Protected ─────────────────────────────────────────────────
 router.get("/me", protect, authController.getMe);
 router.patch("/change-password", protect, validate(changePasswordSchema), authController.changePassword);
+router.post("/me/phones", protect, validate(addPhoneSchema), authController.addMyPhoneNumber);
+router.delete("/me/phones/:phone", protect, authController.removeMyPhoneNumber);
 
 // ── Admin Only ────────────────────────────────────────────────
 router.post("/users", protect, isAdmin, validate(createUserSchema), authController.createUser);
