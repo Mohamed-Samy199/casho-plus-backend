@@ -41,6 +41,19 @@ export async function getCapitalSummary() {
   const totalCapital = totalLiquidity + totalWalletBalance + netDebts;
   const outsideCapital = totalWalletBalance + owedToMe;
 
+  const [wallets, openDebts] = await Promise.all([
+    Wallet.find().populate("partner", "name").populate("owner", "name").lean(),
+    Debt.find({ status: DebtStatus.OPEN }).populate("partyId", "name").lean(),
+  ]);
+  const sumByName = (items, amountKey, fallback) => {
+    const totals = new Map();
+    for (const item of items) {
+      const name = item.partner?.name || item.owner?.name || item.partyId?.name || fallback;
+      totals.set(name, (totals.get(name) || 0) + (item[amountKey] || item.remainingAmount || 0));
+    }
+    return Array.from(totals, ([name, amount]) => ({ name, amount }));
+  };
+
   return {
     totalCapital,
     readyLiquidity: totalLiquidity,
@@ -50,6 +63,20 @@ export async function getCapitalSummary() {
       owedToMe,
       owedByMe,
       netDebts,
+    },
+    contributors: {
+      liquidity: sumByName(wallets, "liquidityBalance", "مساهم غير محدد"),
+      walletBalance: sumByName(wallets, "walletBalance", "مساهم غير محدد"),
+      owedToMe: sumByName(
+        openDebts.filter((debt) => debt.direction === DebtDirection.OWED_TO_ME),
+        "remainingAmount",
+        "طرف غير محدد"
+      ),
+      owedByMe: sumByName(
+        openDebts.filter((debt) => debt.direction === DebtDirection.OWED_BY_ME),
+        "remainingAmount",
+        "طرف غير محدد"
+      ),
     },
   };
 }
@@ -205,17 +232,51 @@ export async function getBalanceHistory({ partnerId, phoneNumber, limit = 100 } 
 
 export async function getMyCapital(userId) {
   const wallets = await Wallet.find({ ownerType: "User", owner: userId }).lean();
-  return wallets.reduce(
-    (summary, wallet) => ({
-      liquidity: summary.liquidity + wallet.liquidityBalance,
-      walletBalance: summary.walletBalance + wallet.walletBalance,
+  if (wallets.length) {
+    return wallets.reduce(
+      (summary, wallet) => ({
+        liquidity: summary.liquidity + (wallet.liquidityBalance || 0),
+        walletBalance: summary.walletBalance + (wallet.walletBalance || 0),
+        lines: [
+          ...summary.lines,
+          {
+            channel: wallet.channel,
+            phoneNumber: wallet.phoneNumber,
+            liquidityBalance: wallet.liquidityBalance || 0,
+            walletBalance: wallet.walletBalance || 0,
+          },
+        ],
+      }),
+      { liquidity: 0, walletBalance: 0, lines: [] }
+    );
+  }
+
+  // توافق مع الإضافات القديمة التي سُجلت في السجل، قبل ربط Wallet بالمستخدم.
+  const history = await BalanceAdjustment.find({
+    $or: [
+      { ownerType: "User", owner: userId },
+      { createdBy: userId },
+    ],
+  })
+    .sort({ createdAt: -1 })
+    .lean();
+  const latestByLine = new Map();
+  for (const item of history) {
+    const key = `${item.channel}:${item.phoneNumber}`;
+    if (!latestByLine.has(key)) latestByLine.set(key, item);
+  }
+
+  return Array.from(latestByLine.values()).reduce(
+    (summary, item) => ({
+      liquidity: summary.liquidity + (item.liquidityAfter || 0),
+      walletBalance: summary.walletBalance + (item.walletAfter || 0),
       lines: [
         ...summary.lines,
         {
-          channel: wallet.channel,
-          phoneNumber: wallet.phoneNumber,
-          liquidityBalance: wallet.liquidityBalance,
-          walletBalance: wallet.walletBalance,
+          channel: item.channel,
+          phoneNumber: item.phoneNumber,
+          liquidityBalance: item.liquidityAfter || 0,
+          walletBalance: item.walletAfter || 0,
         },
       ],
     }),
@@ -224,7 +285,12 @@ export async function getMyCapital(userId) {
 }
 
 export async function getMyBalanceHistory(userId, limit = 100) {
-  return BalanceAdjustment.find({ ownerType: "User", owner: userId })
+  return BalanceAdjustment.find({
+    $or: [
+      { ownerType: "User", owner: userId },
+      { createdBy: userId },
+    ],
+  })
     .populate("createdBy", "name email")
     .sort({ createdAt: -1 })
     .limit(Number(limit))

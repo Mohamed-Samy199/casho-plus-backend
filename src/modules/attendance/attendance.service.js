@@ -21,6 +21,17 @@ function startOfMonth(year, month) {
 export async function checkIn(userId) {
   const date = startOfDay();
 
+  const openRecord = await Attendance.findOne({
+    user: userId,
+    checkInAt: { $ne: null },
+    checkOutAt: null,
+  }).sort({ checkInAt: -1 });
+  if (openRecord) {
+    throw ApiError.badRequest(
+      "لازم تسجل الانصراف للحضور المفتوح الأول قبل تسجيل حضور جديد."
+    );
+  }
+
   const existing = await Attendance.findOne({ user: userId, date });
   if (existing?.checkInAt) {
     throw ApiError.badRequest("تم تسجيل الحضور اليوم بالفعل.");
@@ -37,14 +48,13 @@ export async function checkIn(userId) {
 
 // ── تسجيل انصراف — لازم يكون سجّل حضور الأول ─────────────────
 export async function checkOut(userId) {
-  const date = startOfDay();
-
-  const record = await Attendance.findOne({ user: userId, date });
-  if (!record || !record.checkInAt) {
+  const record = await Attendance.findOne({
+    user: userId,
+    checkInAt: { $ne: null },
+    checkOutAt: null,
+  }).sort({ checkInAt: -1 });
+  if (!record) {
     throw ApiError.badRequest("لازم تسجل حضور الأول قبل الانصراف.");
-  }
-  if (record.checkOutAt) {
-    throw ApiError.badRequest("تم تسجيل الانصراف اليوم بالفعل.");
   }
 
   record.checkOutAt = new Date();
@@ -55,6 +65,16 @@ export async function checkOut(userId) {
 // ── حالة اليوم — عشان الفرونت يعرف يعرض أي زرار ─────────────
 export async function getTodayStatus(userId) {
   const date = startOfDay();
+  // السجل المفتوح له الأولوية حتى يظل زر الانصراف ظاهرًا بعد منتصف الليل.
+  const openRecord = await Attendance.findOne({
+    user: userId,
+    checkInAt: { $ne: null },
+    checkOutAt: null,
+  })
+    .sort({ checkInAt: -1 })
+    .lean();
+  if (openRecord) return openRecord;
+
   const record = await Attendance.findOne({ user: userId, date }).lean();
   return record || null;
 }
@@ -65,14 +85,12 @@ export async function adminUpsertAttendance(
   adminId
 ) {
   const day = startOfDay(new Date(date));
-  const normalizedCheckIn = checkInAt ? new Date(checkInAt) : null;
-  let normalizedCheckOut = checkOutAt ? new Date(checkOutAt) : null;
-
-  // حماية إضافية للسجلات اليدوية القديمة/الواردة بنفس التاريخ:
-  // 03:00 م إلى 02:00 ص تعني أن الانصراف في اليوم التالي.
-  if (normalizedCheckIn && normalizedCheckOut && normalizedCheckOut < normalizedCheckIn) {
-    normalizedCheckOut = new Date(normalizedCheckOut);
-    normalizedCheckOut.setDate(normalizedCheckOut.getDate() + 1);
+  let normalizedCheckOutAt = checkOutAt ? new Date(checkOutAt) : checkOutAt;
+  if (checkInAt && normalizedCheckOutAt) {
+    const normalizedCheckInAt = new Date(checkInAt);
+    if (normalizedCheckOutAt < normalizedCheckInAt) {
+      normalizedCheckOutAt = new Date(normalizedCheckOutAt.getTime() + 24 * 60 * 60 * 1000);
+    }
   }
 
   const record = await Attendance.findOneAndUpdate(
@@ -80,8 +98,8 @@ export async function adminUpsertAttendance(
     {
       user: userId,
       date: day,
-      ...(checkInAt !== undefined && { checkInAt: normalizedCheckIn }),
-      ...(checkOutAt !== undefined && { checkOutAt: normalizedCheckOut }),
+      ...(checkInAt !== undefined && { checkInAt: checkInAt ? new Date(checkInAt) : null }),
+      ...(checkOutAt !== undefined && { checkOutAt: normalizedCheckOutAt || null }),
       notes,
       recordedBy: adminId,
     },
@@ -123,29 +141,29 @@ export async function getMonthlyReport({ year, month }) {
     { $match: { date: { $gte: from, $lte: to }, checkInAt: { $ne: null } } },
     {
       $addFields: {
-          hoursWorked: {
-            $cond: [
-              { $and: ["$checkInAt", "$checkOutAt"] },
-              {
-                $divide: [
-                  {
-                    $subtract: [
-                      {
-                        $cond: [
-                          { $lt: ["$checkOutAt", "$checkInAt"] },
-                          { $add: ["$checkOutAt", 24 * 60 * 60 * 1000] },
-                          "$checkOutAt",
-                        ],
-                      },
-                      "$checkInAt",
-                    ],
-                  },
-                  1000 * 60 * 60,
-                ],
+        hoursWorked: {
+          $cond: [
+            { $and: ["$checkInAt", "$checkOutAt"] },
+            {
+              $let: {
+                vars: { durationMs: { $subtract: ["$checkOutAt", "$checkInAt"] } },
+                in: {
+                  $divide: [
+                    {
+                      $cond: [
+                        { $lt: ["$$durationMs", 0] },
+                        { $add: ["$$durationMs", 24 * 60 * 60 * 1000] },
+                        "$$durationMs",
+                      ],
+                    },
+                    1000 * 60 * 60,
+                  ],
+                },
               },
-              0,
-            ],
-          },
+            },
+            0,
+          ],
+        },
       },
     },
     {

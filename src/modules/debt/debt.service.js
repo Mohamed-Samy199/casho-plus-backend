@@ -2,8 +2,6 @@ import mongoose from "mongoose";
 import Debt from "../../models/Debt.model.js";
 import DebtPayment from "../../models/DebtPayment.model.js";
 import Wallet from "../../models/Wallet.model.js";
-import Client from "../../models/Client.model.js";
-import Partner from "../../models/Partner.model.js";
 import { DebtStatus, DebtDirection, BalanceType } from "../../utils/common/index.js";
 import { ApiError } from "../../utils/ApiError.js";
 import { create, findById, paginate } from "../../db/database.repository.js";
@@ -17,14 +15,6 @@ export async function createDebt({
   dueDate,
   userId,
 }) {
-  const partyModel = partyType === "Client" ? Client : Partner;
-  const party = await partyModel.findById(partyId).select("_id").lean();
-  if (!party) {
-    throw ApiError.notFound(
-      partyType === "Client" ? "العميل المرتبط بالدين غير موجود." : "الشريك المرتبط بالدين غير موجود."
-    );
-  }
-
   return create({
     model: Debt,
     data: {
@@ -54,13 +44,78 @@ export async function listDebts({
   if (direction) filter.direction = direction;
   if (status) filter.status = status;
 
-  return paginate({
+  const paginated = await paginate({
     model: Debt,
     filter,
     page,
     size,
     options: { sort: { createdAt: -1 }, lean: true },
   });
+
+  // ملخص سريع للدفعات حتى تظهر صفحة الديون إجمالي المدفوع وما إذا كان
+  // أي جزء من السداد أثّر فعليًا على رأس المال أو على حساب تشغيل.
+  const debtIds = paginated.result.map((debt) => debt._id);
+  const paymentSummaries = debtIds.length
+    ? await DebtPayment.aggregate([
+        { $match: { debt: { $in: debtIds } } },
+        {
+          $group: {
+            _id: "$debt",
+            paidAmount: { $sum: "$amount" },
+            capitalAffectedAmount: {
+              $sum: { $cond: ["$affectsCapital", "$amount", 0] },
+            },
+            lastPaymentAt: { $max: "$createdAt" },
+            affectedWalletIds: {
+              $addToSet: {
+                $cond: [
+                  { $and: ["$affectsCapital", { $ne: ["$wallet", null] }] },
+                  "$wallet",
+                  null,
+                ],
+              },
+            },
+          },
+        },
+      ])
+    : [];
+
+  const walletIds = paymentSummaries
+    .flatMap((summary) => summary.affectedWalletIds || [])
+    .filter(Boolean);
+  const wallets = walletIds.length
+    ? await Wallet.find({ _id: { $in: walletIds } })
+        .populate("partner", "name")
+        .lean()
+    : [];
+  const walletsById = new Map(wallets.map((wallet) => [String(wallet._id), wallet]));
+  const summariesByDebt = new Map(paymentSummaries.map((summary) => [String(summary._id), summary]));
+
+  return {
+    ...paginated,
+    result: paginated.result.map((debt) => {
+      const summary = summariesByDebt.get(String(debt._id));
+      const affectedAccounts = (summary?.affectedWalletIds || [])
+        .filter(Boolean)
+        .map((walletId) => walletsById.get(String(walletId)))
+        .filter(Boolean)
+        .map((wallet) => ({
+          partnerName: wallet.partner?.name,
+          phoneNumber: wallet.phoneNumber,
+          channel: wallet.channel,
+        }));
+
+      return {
+        ...debt,
+        paidAmount: summary?.paidAmount || 0,
+        lastPaymentAt: summary?.lastPaymentAt || null,
+        capitalAffected: (summary?.capitalAffectedAmount || 0) > 0,
+        capitalAffectedAmount: summary?.capitalAffectedAmount || 0,
+        accountAffected: affectedAccounts.length > 0,
+        affectedAccounts,
+      };
+    }),
+  };
 }
 
 export async function getDebtById(id) {
