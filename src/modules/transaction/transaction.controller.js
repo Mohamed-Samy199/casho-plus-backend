@@ -31,3 +31,12 @@ export const getTransactionHandler = asyncHandler(async (req, res) => {
   const transaction = await transactionService.getTransactionById(req.params.id);
   return ApiResponse.ok(res, "تم جلب العملية بنجاح.", transaction);
 });
+
+export const settleTransactionHandler = asyncHandler(async (req, res) => {
+  const result = await transactionService.settleTransaction(
+    req.params.id,
+    req.body.amount,
+    req.user._id
+  );
+  return ApiResponse.ok(res, "تم تسجيل السداد بنجاح.", result);
+});

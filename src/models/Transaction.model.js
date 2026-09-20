@@ -4,17 +4,15 @@ import { Channel, OperationStage, PartyType } from "../utils/common/index.js";
 const transactionSchema = new mongoose.Schema(
   {
     // الشريك اللي محفظته/سيولته اتأثرت
-    partner: { type: mongoose.Schema.Types.ObjectId, ref: "Partner" },
-    accountType: { type: String, enum: ["Partner", "User"], default: "Partner" },
-    account: { type: mongoose.Schema.Types.ObjectId, refPath: "accountType" },
+    partner: { type: mongoose.Schema.Types.ObjectId, ref: "Partner", required: true },
     wallet: { type: mongoose.Schema.Types.ObjectId, ref: "Wallet", required: true },
     channel: { type: String, enum: Object.values(Channel), required: true },
     // الرقم/الشريحة المحددة اللي اتنفذت العملية من خلالها
     phoneNumber: { type: String, required: true, trim: true },
 
-    // الطرف التاني في العملية (فرد / عميل رئيسي)
+    // الطرف التاني في العملية (فرد / عميل رئيسي / عميل عابر بدون بيانات)
     partyType: { type: String, enum: Object.values(PartyType), required: true },
-    partyId: { type: mongoose.Schema.Types.ObjectId, required: true, refPath: "partyType" },
+    partyId: { type: mongoose.Schema.Types.ObjectId, refPath: "partyType" },
 
     stage: { type: String, enum: Object.values(OperationStage), required: true },
 
@@ -31,7 +29,19 @@ const transactionSchema = new mongoose.Schema(
     // تأخير العملاء الرئيسيين
     agreedDueAt: { type: Date },
     settledAt: { type: Date },
-    lateCommission: { type: Number, default: 0 },
+    // قيمة العمولة لكل شريحة 1000 جنيه عن كل يوم، محفوظة وقت العملية.
+    lateCommissionPerThousand: { type: Number, default: 0, min: 0 },
+    lateCommission: { type: Number, default: 0, min: 0 },
+    paidAmount: { type: Number, default: 0, min: 0 },
+    remainingAmount: { type: Number, default: 0, min: 0 },
+    payments: [
+      {
+        amount: { type: Number, required: true, min: 1 },
+        lateCommission: { type: Number, default: 0, min: 0 },
+        paidAt: { type: Date, default: Date.now },
+        createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+      },
+    ],
 
     notes: { type: String, trim: true },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
@@ -41,6 +51,5 @@ const transactionSchema = new mongoose.Schema(
 
 transactionSchema.index({ partyType: 1, partyId: 1, createdAt: -1 });
 transactionSchema.index({ partner: 1, channel: 1, phoneNumber: 1, createdAt: -1 });
-transactionSchema.index({ accountType: 1, account: 1, createdAt: -1 });
 
 export default mongoose.model("Transaction", transactionSchema);

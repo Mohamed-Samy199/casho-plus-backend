@@ -35,6 +35,7 @@ export const BalanceType = Object.freeze({
 export const PartyType = Object.freeze({
   PARTNER: "Partner",
   CLIENT: "Client",
+  WALK_IN: "WalkIn",
 });
 
 // ── الديون ───────────────────────────────────────────────────

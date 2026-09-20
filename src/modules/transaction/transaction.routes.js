@@ -6,6 +6,7 @@ import validateQuery from "../../middlewares/validateQuery.middleware.js";
 import {
   createTransactionSchema,
   listTransactionsSchema,
+  settleTransactionSchema,
 } from "./transaction.validation.js";
 
 const router = Router();
@@ -15,6 +16,11 @@ router.use(protect);
 
 router.post("/", validate(createTransactionSchema), transactionController.createTransactionHandler);
 router.get("/", validateQuery(listTransactionsSchema), transactionController.listTransactionsHandler);
+router.patch(
+  "/:id/settle",
+  validate(settleTransactionSchema),
+  transactionController.settleTransactionHandler
+);
 router.get("/:id", transactionController.getTransactionHandler);
 
 export default router;

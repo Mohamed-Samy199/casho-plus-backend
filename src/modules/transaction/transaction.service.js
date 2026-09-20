@@ -1,9 +1,8 @@
 import mongoose from "mongoose";
 import Wallet from "../../models/Wallet.model.js";
-import User from "../../models/User.model.js";
-import Partner from "../../models/Partner.model.js";
 import Transaction from "../../models/Transaction.model.js";
-import { OperationStage } from "../../utils/common/index.js";
+import Client from "../../models/Client.model.js";
+import { ClientType, OperationStage, PartyType } from "../../utils/common/index.js";
 import { ApiError } from "../../utils/ApiError.js";
 import { paginate, findById } from "../../db/database.repository.js";
 import { resolveDefaultCommission } from "../commission-rule/commission-rule.service.js";
@@ -26,7 +25,6 @@ export function calculateEffect({ stage, amount, commission = 0 }) {
 }
 
 export async function createTransaction({
-  accountType = "Partner",
   partnerId,
   channel,
   phoneNumber,
@@ -35,30 +33,21 @@ export async function createTransaction({
   partyId,
   amount,
   commission,
+  lateCommissionPerThousand,
   agreedDueAt,
   notes,
   userId,
 }) {
-  const accountId = accountType === "User" ? userId : partnerId;
-  const AccountModel = accountType === "User" ? User : Partner;
-  const account = await AccountModel.findById(accountId).lean();
-  if (!account) throw ApiError.notFound(accountType === "User" ? "حساب الأدمن غير موجود." : "الشريك غير موجود.");
-  if (!account.phoneNumbers?.includes(phoneNumber)) {
-    throw ApiError.badRequest("رقم التلفون غير تابع للحساب المختار.");
-  }
   const session = await mongoose.startSession();
   try {
     let result;
     await session.withTransaction(async () => {
-      const walletFilter = accountType === "User"
-        ? { ownerType: "User", owner: accountId, channel, phoneNumber }
-        : { partner: accountId, channel, phoneNumber };
-      let wallet = await Wallet.findOne(walletFilter).session(session);
+      let wallet = await Wallet.findOne({ partner: partnerId, channel, phoneNumber }).session(
+        session
+      );
       if (!wallet) {
         const created = await Wallet.create(
-          [accountType === "User"
-            ? { ownerType: "User", owner: accountId, channel, phoneNumber }
-            : { partner: accountId, channel, ownerType: "Partner", phoneNumber }],
+          [{ partner: partnerId, channel, phoneNumber }],
           { session }
         );
         wallet = created[0];
@@ -68,6 +57,26 @@ export async function createTransaction({
         commission !== undefined && commission !== null
           ? commission
           : await resolveDefaultCommission({ channel, stage, amount });
+
+      let finalDueAt = agreedDueAt ? new Date(agreedDueAt) : undefined;
+      let finalLateCommission = lateCommissionPerThousand ?? 0;
+      if (partyType === PartyType.CLIENT) {
+        const client = await Client.findById(partyId).select("type keyClientSettings").lean();
+        if (!client) throw ApiError.notFound("العميل غير موجود.");
+        if (client.type === ClientType.KEY_CLIENT) {
+          const settings = client.keyClientSettings || {};
+          if (!finalDueAt && settings.defaultAgreedHours) {
+            finalDueAt = new Date(Date.now() + settings.defaultAgreedHours * 60 * 60 * 1000);
+          }
+          if (lateCommissionPerThousand === undefined) {
+            finalLateCommission = settings.defaultLateCommission ?? 500;
+          }
+        }
+      } else if (partyType === PartyType.WALK_IN) {
+        // العميل العابر لا يملك سجلًا أو partyId؛ العملية تُسجل ماليًا فقط.
+        finalDueAt = undefined;
+        finalLateCommission = 0;
+      }
 
       const { walletEffect, liquidityEffect } = calculateEffect({
         stage,
@@ -93,10 +102,7 @@ export async function createTransaction({
 
       await checkLowBalanceAndNotify(
         {
-          partnerId: accountType === "Partner" ? accountId : null,
-          accountType,
-          accountId,
-          accountName: account.name,
+          partnerId,
           wallet: wallet._id,
           channel,
           phoneNumber,
@@ -109,9 +115,7 @@ export async function createTransaction({
       const [transaction] = await Transaction.create(
         [
           {
-            ...(accountType === "User" ? {} : { partner: accountId }),
-            accountType,
-            account: accountId,
+            partner: partnerId,
             wallet: wallet._id,
             channel,
             phoneNumber,
@@ -124,7 +128,10 @@ export async function createTransaction({
             liquidityEffect,
             walletBalanceAfter: newWalletBalance,
             liquidityBalanceAfter: newLiquidityBalance,
-            agreedDueAt,
+            agreedDueAt: finalDueAt,
+            lateCommissionPerThousand: finalLateCommission,
+            paidAmount: 0,
+            remainingAmount: amount,
             notes,
             createdBy: userId,
           },
@@ -138,6 +145,41 @@ export async function createTransaction({
   } finally {
     session.endSession();
   }
+}
+
+export async function settleTransaction(transactionId, paymentAmount, userId) {
+  const transaction = await Transaction.findById(transactionId);
+  if (!transaction) throw ApiError.notFound("العملية غير موجودة.");
+
+  const remainingBefore =
+    transaction.remainingAmount > 0
+      ? transaction.remainingAmount
+      : Math.max(0, transaction.amount - (transaction.paidAmount || 0));
+  if (remainingBefore <= 0) throw ApiError.badRequest("العملية مسددة بالكامل بالفعل.");
+  if (paymentAmount > remainingBefore) {
+    throw ApiError.badRequest("قيمة السداد أكبر من المبلغ المتبقي.");
+  }
+
+  const now = new Date();
+  const daysLate = transaction.agreedDueAt
+    ? Math.max(0, Math.floor((now.getTime() - new Date(transaction.agreedDueAt).getTime()) / 86400000))
+    : 0;
+  const dailyFee =
+    Math.ceil(remainingBefore / 100000) * (transaction.lateCommissionPerThousand || 0);
+  const lateCommission = daysLate * dailyFee;
+  const remainingAfter = remainingBefore - paymentAmount;
+
+  transaction.paidAmount = (transaction.paidAmount || 0) + paymentAmount;
+  transaction.remainingAmount = remainingAfter;
+  transaction.lateCommission = (transaction.lateCommission || 0) + lateCommission;
+  transaction.payments.push({ amount: paymentAmount, lateCommission, paidAt: now, createdBy: userId });
+  if (remainingAfter === 0) transaction.settledAt = now;
+  await transaction.save();
+
+  return {
+    transaction,
+    payment: { amount: paymentAmount, lateCommission, daysLate },
+  };
 }
 
 export async function listTransactions({

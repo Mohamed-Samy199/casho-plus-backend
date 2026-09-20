@@ -2,11 +2,7 @@ import Joi from "joi";
 import { Channel, OperationStage, PartyType } from "../../utils/common/index.js";
 
 export const createTransactionSchema = Joi.object({
-  accountType: Joi.string().valid("Partner", "User").default("Partner"),
-  partnerId: Joi.string().hex().length(24).when("accountType", {
-    is: "Partner",
-    then: Joi.required(),
-  }).messages({
+  partnerId: Joi.string().hex().length(24).required().messages({
     "any.required": "الشريك مطلوب.",
   }),
   channel: Joi.string()
@@ -33,8 +29,12 @@ export const createTransactionSchema = Joi.object({
   partyType: Joi.string()
     .valid(...Object.values(PartyType))
     .required(),
-  partyId: Joi.string().hex().length(24).required().messages({
-    "any.required": "الطرف الآخر في العملية مطلوب.",
+  partyId: Joi.when("partyType", {
+    is: PartyType.WALK_IN,
+    then: Joi.any().valid(null, "").optional(),
+    otherwise: Joi.string().hex().length(24).required().messages({
+      "any.required": "الطرف الآخر في العملية مطلوب.",
+    }),
   }),
   amount: Joi.number().integer().min(1).required().messages({
     "any.required": "المبلغ مطلوب.",
@@ -42,6 +42,7 @@ export const createTransactionSchema = Joi.object({
   }),
   // لو الموظف مبعتش عمولة، السيستم بيحسبها تلقائي من الديفولت
   commission: Joi.number().integer().min(0).optional(),
+  lateCommissionPerThousand: Joi.number().integer().min(0).optional(),
   agreedDueAt: Joi.date().optional().allow(null),
   notes: Joi.string().max(500).optional().allow(""),
 });
@@ -65,4 +66,11 @@ export const listTransactionsSchema = Joi.object({
   to: Joi.date().optional(),
   page: Joi.number().integer().min(1).optional(),
   size: Joi.number().integer().min(1).max(100).optional(),
+});
+
+export const settleTransactionSchema = Joi.object({
+  amount: Joi.number().integer().min(1).required().messages({
+    "any.required": "قيمة السداد مطلوبة.",
+    "number.min": "قيمة السداد يجب أن تكون أكبر من صفر.",
+  }),
 });
