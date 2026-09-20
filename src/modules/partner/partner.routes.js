@@ -9,6 +9,7 @@ import {
   updatePartnerSchema,
   addPhoneSchema,
   listPartnersSchema,
+  createPartnerAccountSchema,
 } from "./partner.validation.js";
 
 const router = Router();
@@ -21,6 +22,12 @@ router.get("/:id", partnerController.getPartnerHandler);
 
 router.post("/", isAdmin, validate(createPartnerSchema), partnerController.createPartnerHandler);
 router.patch("/:id", isAdmin, validate(updatePartnerSchema), partnerController.updatePartnerHandler);
+router.post(
+  "/:id/account",
+  isAdmin,
+  validate(createPartnerAccountSchema),
+  partnerController.createPartnerAccountHandler
+);
 router.post("/:id/phones", isAdmin, validate(addPhoneSchema), partnerController.addPhoneNumberHandler);
 router.delete("/:id/phones/:phone", isAdmin, partnerController.removePhoneNumberHandler);
 

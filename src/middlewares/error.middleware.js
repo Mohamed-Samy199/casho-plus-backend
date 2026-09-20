@@ -21,7 +21,8 @@ const errorMiddleware = (err, req, res, next) => {
 
   // duplicate key (مثلاً رقم تلفون مسجّل قبل كده)
   if (err.code === 11000) {
-    const field = Object.keys(err.keyValue)[0];
+    const duplicateFields = err.keyValue || err.keyPattern || {};
+    const field = Object.keys(duplicateFields)[0] || "البيانات";
     error = ApiError.conflict(`القيمة الخاصة بـ ${field} مستخدمة بالفعل.`);
   }
 

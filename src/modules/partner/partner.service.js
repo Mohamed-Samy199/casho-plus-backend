@@ -1,11 +1,22 @@
 import Partner from "../../models/Partner.model.js";
 import Wallet from "../../models/Wallet.model.js";
-import { Channel } from "../../utils/common/index.js";
+import User from "../../models/User.model.js";
+import { Channel, UserRole } from "../../utils/common/index.js";
 import { ApiError } from "../../utils/ApiError.js";
 import { create, find, findById, findOne, findOneAndUpdate } from "../../db/database.repository.js";
 
-export async function createPartner({ name, phoneNumbers }, userId) {
-  if (phoneNumbers?.length) {
+export async function createPartner({ name, phoneNumbers, createAccount = false, password }, userId) {
+  if (!Array.isArray(phoneNumbers) || phoneNumbers.length === 0) {
+    throw ApiError.badRequest("يجب إضافة رقم هاتف واحد على الأقل للشريك.");
+  }
+  if (new Set(phoneNumbers).size !== phoneNumbers.length) {
+    throw ApiError.badRequest("لا يمكن تكرار نفس رقم الهاتف للشريك.");
+  }
+  if (createAccount) {
+    const existingUser = await User.findOne({ phoneNumbers: { $in: phoneNumbers } }).lean();
+    if (existingUser) throw ApiError.conflict("أحد أرقام الهاتف مستخدم بالفعل مع حساب دخول آخر.");
+  }
+  if (phoneNumbers.length) {
     const existing = await findOne({
       model: Partner,
       filter: { phoneNumbers: { $in: phoneNumbers } },
@@ -29,7 +40,43 @@ export async function createPartner({ name, phoneNumbers }, userId) {
     );
   }
 
-  return partner;
+  let account = null;
+  if (createAccount) {
+    const user = await User.create({
+      name,
+      phoneNumbers,
+      password,
+      role: UserRole.ADMIN,
+      partner: partner._id,
+      createdBy: userId,
+    });
+    account = user.toSafeObject();
+  }
+
+  return { ...partner.toObject(), account };
+}
+
+export async function createPartnerAccount(partnerId, password, adminId) {
+  const partner = await findById({ model: Partner, id: partnerId, options: { lean: true } });
+  if (!partner) throw ApiError.notFound("الشريك غير موجود.");
+  const phoneNumbers = partner.phoneNumbers || [];
+  if (!phoneNumbers.length) throw ApiError.badRequest("لازم يكون للشريك رقم هاتف قبل إنشاء الحساب.");
+
+  const existingAccount = await User.findOne({ partner: partnerId }).lean();
+  if (existingAccount) throw ApiError.conflict("الشريك لديه حساب دخول بالفعل.");
+
+  const existingUser = await User.findOne({ phoneNumbers: { $in: phoneNumbers } }).lean();
+  if (existingUser) throw ApiError.conflict("رقم الهاتف مستخدم بالفعل مع حساب دخول آخر.");
+
+  const account = await User.create({
+    name: partner.name,
+    phoneNumbers,
+    password,
+    role: UserRole.ADMIN,
+    partner: partner._id,
+    createdBy: adminId,
+  });
+  return account.toSafeObject();
 }
 
 export async function listPartners({ isActive } = {}) {
@@ -56,8 +103,11 @@ export async function getPartnerDetails(id) {
 
   const totalLiquidity = lines.reduce((sum, l) => sum + l.liquidityBalance, 0);
   const totalWalletBalance = lines.reduce((sum, l) => sum + l.walletBalance, 0);
+  const account = await User.findOne({ partner: id })
+    .select("name phoneNumbers email role isActive lastLoginAt")
+    .lean();
 
-  return { ...partner, lines, totalLiquidity, totalWalletBalance };
+  return { ...partner, lines, totalLiquidity, totalWalletBalance, account };
 }
 
 export async function updatePartner(id, { name, isActive }) {

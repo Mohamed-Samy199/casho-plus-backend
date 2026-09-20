@@ -20,6 +20,9 @@ const userSchema = new mongoose.Schema(
 
     email: { type: String, trim: true, lowercase: true }, // اختياري
 
+    // اختياري: الحساب قد يكون مرتبطًا بشريك، لكن صلاحياته تظل من UserRole.
+    partner: { type: mongoose.Schema.Types.ObjectId, ref: "Partner" },
+
     password: { type: String, required: true, select: false },
     role: {
       type: String,
@@ -53,6 +56,7 @@ userSchema.methods.toSafeObject = function () {
     phoneNumbers: this.phoneNumbers,
     primaryPhone: this.phoneNumbers?.[0],
     email: this.email,
+    partner: this.partner,
     role: this.role,
     isActive: this.isActive,
     lastLoginAt: this.lastLoginAt,

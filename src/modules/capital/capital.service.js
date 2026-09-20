@@ -163,10 +163,17 @@ export async function adjustBalance({
         wallet = new Wallet({
           ...(ownerType === "User"
             ? { ownerType: "User", owner: actualOwnerId }
-            : { partner: actualOwnerId, ownerType: "Partner" }),
+            : { partner: actualOwnerId, ownerType: "Partner", owner: actualOwnerId }),
           channel,
           phoneNumber,
         });
+      }
+
+      // السجلات القديمة كانت تحفظ ownerType فقط للشريك؛ نكمل owner تلقائيًا.
+      if (ownerType !== "User") {
+        wallet.ownerType = "Partner";
+        wallet.owner = actualOwnerId;
+        wallet.partner = actualOwnerId;
       }
 
       const liquidityBefore = wallet.liquidityBalance || 0;
@@ -191,7 +198,7 @@ export async function adjustBalance({
           {
             ...(ownerType === "User"
               ? { ownerType: "User", owner: actualOwnerId }
-              : { partner: actualOwnerId }),
+              : { partner: actualOwnerId, ownerType: "Partner", owner: actualOwnerId }),
             wallet: wallet._id,
             channel,
             phoneNumber,

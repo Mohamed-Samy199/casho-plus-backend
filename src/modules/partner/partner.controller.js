@@ -22,6 +22,15 @@ export const updatePartnerHandler = asyncHandler(async (req, res) => {
   return ApiResponse.ok(res, "تم تحديث بيانات الشريك بنجاح.", partner);
 });
 
+export const createPartnerAccountHandler = asyncHandler(async (req, res) => {
+  const account = await partnerService.createPartnerAccount(
+    req.params.id,
+    req.body.password,
+    req.user._id
+  );
+  return ApiResponse.created(res, "تم إنشاء حساب دخول الشريك بنجاح.", account);
+});
+
 export const addPhoneNumberHandler = asyncHandler(async (req, res) => {
   const partner = await partnerService.addPhoneNumber(req.params.id, req.body.phone);
   return ApiResponse.ok(res, "تم إضافة رقم التلفون بنجاح.", partner);
