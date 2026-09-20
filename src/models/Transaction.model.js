@@ -3,8 +3,10 @@ import { Channel, OperationStage, PartyType } from "../utils/common/index.js";
 
 const transactionSchema = new mongoose.Schema(
   {
-    // الشريك اللي محفظته/سيولته اتأثرت
-    partner: { type: mongoose.Schema.Types.ObjectId, ref: "Partner", required: true },
+    // صاحب المحفظة التي تأثرت: شريك أو أدمن/مستخدم
+    partner: { type: mongoose.Schema.Types.ObjectId, ref: "Partner" },
+    ownerType: { type: String, enum: ["Partner", "User"], default: "Partner" },
+    owner: { type: mongoose.Schema.Types.ObjectId, refPath: "ownerType" },
     wallet: { type: mongoose.Schema.Types.ObjectId, ref: "Wallet", required: true },
     channel: { type: String, enum: Object.values(Channel), required: true },
     // الرقم/الشريحة المحددة اللي اتنفذت العملية من خلالها

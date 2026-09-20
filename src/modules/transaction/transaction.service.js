@@ -2,6 +2,8 @@ import mongoose from "mongoose";
 import Wallet from "../../models/Wallet.model.js";
 import Transaction from "../../models/Transaction.model.js";
 import Client from "../../models/Client.model.js";
+import Partner from "../../models/Partner.model.js";
+import User from "../../models/User.model.js";
 import { ClientType, OperationStage, PartyType } from "../../utils/common/index.js";
 import { ApiError } from "../../utils/ApiError.js";
 import { paginate, findById } from "../../db/database.repository.js";
@@ -26,6 +28,8 @@ export function calculateEffect({ stage, amount, commission = 0 }) {
 
 export async function createTransaction({
   partnerId,
+  ownerType = "Partner",
+  ownerId,
   channel,
   phoneNumber,
   stage,
@@ -38,16 +42,31 @@ export async function createTransaction({
   notes,
   userId,
 }) {
+  const actualOwnerId = ownerId || partnerId;
+  const actualOwnerType = ownerId ? ownerType : "Partner";
+  if (!actualOwnerId) throw ApiError.badRequest("صاحب الحساب المالي مطلوب.");
+
   const session = await mongoose.startSession();
   try {
     let result;
     await session.withTransaction(async () => {
-      let wallet = await Wallet.findOne({ partner: partnerId, channel, phoneNumber }).session(
-        session
-      );
+      const ownerModel = actualOwnerType === "User" ? User : Partner;
+      const ownerRecord = await ownerModel.findById(actualOwnerId).select("name phoneNumbers isActive").lean();
+      if (!ownerRecord) throw ApiError.notFound("صاحب الحساب المالي غير موجود.");
+      if (ownerRecord.isActive === false) throw ApiError.badRequest("صاحب الحساب المالي غير نشط.");
+      if (!ownerRecord.phoneNumbers?.includes(phoneNumber)) {
+        throw ApiError.badRequest("الرقم/الشريحة غير تابع لصاحب الحساب المختار.");
+      }
+
+      const walletFilter = actualOwnerType === "User"
+        ? { ownerType: "User", owner: actualOwnerId, channel, phoneNumber }
+        : { partner: actualOwnerId, channel, phoneNumber };
+      let wallet = await Wallet.findOne(walletFilter).session(session);
       if (!wallet) {
         const created = await Wallet.create(
-          [{ partner: partnerId, channel, phoneNumber }],
+          [actualOwnerType === "User"
+            ? { ownerType: "User", owner: actualOwnerId, channel, phoneNumber }
+            : { partner: actualOwnerId, ownerType: "Partner", owner: actualOwnerId, channel, phoneNumber }],
           { session }
         );
         wallet = created[0];
@@ -102,7 +121,7 @@ export async function createTransaction({
 
       await checkLowBalanceAndNotify(
         {
-          partnerId,
+          partnerId: actualOwnerType === "Partner" ? actualOwnerId : undefined,
           wallet: wallet._id,
           channel,
           phoneNumber,
@@ -115,7 +134,9 @@ export async function createTransaction({
       const [transaction] = await Transaction.create(
         [
           {
-            partner: partnerId,
+            ...(actualOwnerType === "Partner" && { partner: actualOwnerId }),
+            ownerType: actualOwnerType,
+            owner: actualOwnerId,
             wallet: wallet._id,
             channel,
             phoneNumber,
@@ -214,7 +235,10 @@ export async function listTransactions({
     size,
     options: {
       sort: { createdAt: -1 },
-      populate: [{ path: "partner", select: "name" }],
+      populate: [
+        { path: "partner", select: "name" },
+        { path: "owner", select: "name" },
+      ],
       lean: true,
     },
   });
@@ -225,7 +249,10 @@ export async function getTransactionById(id) {
     model: Transaction,
     id,
     options: {
-      populate: [{ path: "partner", select: "name" }],
+      populate: [
+        { path: "partner", select: "name" },
+        { path: "owner", select: "name" },
+      ],
       lean: true,
     },
   });

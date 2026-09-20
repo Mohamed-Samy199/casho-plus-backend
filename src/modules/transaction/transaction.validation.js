@@ -2,9 +2,10 @@ import Joi from "joi";
 import { Channel, OperationStage, PartyType } from "../../utils/common/index.js";
 
 export const createTransactionSchema = Joi.object({
-  partnerId: Joi.string().hex().length(24).required().messages({
-    "any.required": "الشريك مطلوب.",
-  }),
+  ownerType: Joi.string().valid("Partner", "User").default("Partner"),
+  ownerId: Joi.string().hex().length(24).optional(),
+  // توافق مع الطلبات القديمة التي كانت ترسل partnerId.
+  partnerId: Joi.string().hex().length(24).optional(),
   channel: Joi.string()
     .valid(...Object.values(Channel))
     .required()

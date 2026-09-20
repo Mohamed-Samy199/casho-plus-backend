@@ -50,6 +50,7 @@ async function getRecentTransactions(limit = 10) {
     .sort({ createdAt: -1 })
     .limit(limit)
     .populate("partner", "name")
+    .populate("owner", "name")
     .lean();
 }
 
