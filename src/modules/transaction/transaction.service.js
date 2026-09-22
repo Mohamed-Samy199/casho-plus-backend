@@ -204,6 +204,8 @@ export async function settleTransaction(transactionId, paymentAmount, userId) {
 }
 
 export async function listTransactions({
+  ownerType,
+  ownerId,
   partnerId,
   partyType,
   partyId,
@@ -216,7 +218,20 @@ export async function listTransactions({
   size = 20,
 }) {
   const filter = {};
-  if (partnerId) filter.partner = partnerId;
+  if (ownerId) {
+    if ((ownerType || "Partner") === "Partner") {
+      // بعض السجلات القديمة تعتمد على partner بدل owner؛ ندعم الصيغتين.
+      filter.$or = [
+        { ownerType: "Partner", owner: ownerId },
+        { partner: ownerId },
+      ];
+    } else {
+      filter.ownerType = "User";
+      filter.owner = ownerId;
+    }
+  } else if (partnerId) {
+    filter.partner = partnerId;
+  }
   if (partyType) filter.partyType = partyType;
   if (partyId) filter.partyId = partyId;
   if (channel) filter.channel = channel;
