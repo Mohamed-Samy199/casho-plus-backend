@@ -9,6 +9,10 @@ import {
   balanceHistoryQuerySchema,
   myBalanceAdjustmentSchema,
   myBalanceHistoryQuerySchema,
+  reconciliationQuerySchema,
+  reconciliationHistoryQuerySchema,
+  treasuryMovementsQuerySchema,
+  closeReconciliationSchema,
 } from "./capital.validation.js";
 
 const router = Router();
@@ -17,6 +21,26 @@ const router = Router();
 router.use(protect, isAdmin);
 
 router.get("/summary", capitalController.getCapitalSummaryHandler);
+router.get(
+  "/reconciliation",
+  validateQuery(reconciliationQuerySchema),
+  capitalController.getDailyReconciliationHandler
+);
+router.get(
+  "/reconciliation/history",
+  validateQuery(reconciliationHistoryQuerySchema),
+  capitalController.listDailyReconciliationsHandler
+);
+router.get(
+  "/treasury-movements",
+  validateQuery(treasuryMovementsQuerySchema),
+  capitalController.getTreasuryMovementsHandler
+);
+router.post(
+  "/reconciliation/close",
+  validate(closeReconciliationSchema),
+  capitalController.closeDailyReconciliationHandler
+);
 router.get("/by-partner", capitalController.getCapitalByPartnerHandler);
 router.get("/me", capitalController.getMyCapitalHandler);
 router.post(

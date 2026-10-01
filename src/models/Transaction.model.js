@@ -47,11 +47,22 @@ const transactionSchema = new mongoose.Schema(
 
     notes: { type: String, trim: true },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+
+    // Reversals are new transactions; these fields keep the audit trail on the original.
+    reversalOf: { type: mongoose.Schema.Types.ObjectId, ref: "Transaction" },
+    correctionOf: { type: mongoose.Schema.Types.ObjectId, ref: "Transaction" },
+    reversedAt: { type: Date },
+    reversalTransaction: { type: mongoose.Schema.Types.ObjectId, ref: "Transaction" },
+    correctedTransaction: { type: mongoose.Schema.Types.ObjectId, ref: "Transaction" },
+    correctionStage: { type: String, enum: Object.values(OperationStage) },
+    reversalReason: { type: String, trim: true, maxlength: 500 },
+    reversedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   },
   { timestamps: true }
 );
 
 transactionSchema.index({ partyType: 1, partyId: 1, createdAt: -1 });
 transactionSchema.index({ partner: 1, channel: 1, phoneNumber: 1, createdAt: -1 });
+transactionSchema.index({ reversalOf: 1 }, { unique: true, sparse: true });
 
 export default mongoose.model("Transaction", transactionSchema);

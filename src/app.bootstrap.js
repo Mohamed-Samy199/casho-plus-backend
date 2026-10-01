@@ -4,7 +4,6 @@ import helmet from "helmet";
 import morgan from "morgan";
 import mongoSanitize from "express-mongo-sanitize";
 import compression from "compression";
-import xss from "xss";
 
 import errorMiddleware from "./middlewares/error.middleware.js";
 import authRoutes from "./modules/auth/auth.routes.js";
@@ -40,22 +39,6 @@ app.use(
   })
 );
 
-// ── XSS Prevention ───────────────────────────────────────────
-app.use((req, _res, next) => {
-  if (req.body) sanitizeObject(req.body);
-  next();
-});
-
-const sanitizeObject = (obj) => {
-  for (const key of Object.keys(obj)) {
-    if (typeof obj[key] === "string") {
-      obj[key] = xss(obj[key]);
-    } else if (typeof obj[key] === "object" && obj[key] !== null) {
-      sanitizeObject(obj[key]);
-    }
-  }
-};
-
 const ALLOWED_ORIGINS = [
   process.env.CLIENT_URL,
   "http://localhost:5173",
@@ -77,6 +60,9 @@ app.use(
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
+// Parsers must run before body-dependent security middleware.
+// Joi validation below strips unknown fields and validates every mutation body.
+// React escapes rendered text by default; sanitize only fields intentionally rendered as HTML.
 // ── NoSQL Injection Prevention ────────────────────────────────
 app.use(mongoSanitize());
 

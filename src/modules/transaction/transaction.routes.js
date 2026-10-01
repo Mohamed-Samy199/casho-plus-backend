@@ -1,11 +1,14 @@
 import { Router } from "express";
 import * as transactionController from "./transaction.controller.js";
 import { protect } from "../../middlewares/auth.middleware.js";
+import { isAdmin } from "../../middlewares/role.middleware.js";
 import validate from "../../middlewares/validate.middleware.js";
 import validateQuery from "../../middlewares/validateQuery.middleware.js";
 import {
   createTransactionSchema,
+  correctTransactionSchema,
   listTransactionsSchema,
+  reverseTransactionSchema,
   settleTransactionSchema,
 } from "./transaction.validation.js";
 
@@ -20,6 +23,18 @@ router.patch(
   "/:id/settle",
   validate(settleTransactionSchema),
   transactionController.settleTransactionHandler
+);
+router.post(
+  "/:id/reverse",
+  isAdmin,
+  validate(reverseTransactionSchema),
+  transactionController.reverseTransactionHandler
+);
+router.post(
+  "/:id/correct",
+  isAdmin,
+  validate(correctTransactionSchema),
+  transactionController.correctTransactionHandler
 );
 router.get("/:id", transactionController.getTransactionHandler);
 

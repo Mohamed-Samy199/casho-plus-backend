@@ -38,3 +38,32 @@ export const balanceHistoryQuerySchema = Joi.object({
 export const myBalanceHistoryQuerySchema = Joi.object({
   limit: Joi.number().integer().min(1).max(100).optional(),
 });
+
+const reconciliationDate = Joi.string()
+  .pattern(/^\d{4}-\d{2}-\d{2}$/)
+  .required()
+  .messages({ "string.pattern.base": "التاريخ يجب أن يكون بصيغة YYYY-MM-DD." });
+
+export const reconciliationQuerySchema = Joi.object({
+  date: reconciliationDate,
+});
+
+export const reconciliationHistoryQuerySchema = Joi.object({
+  page: Joi.number().integer().min(1).default(1),
+  size: Joi.number().integer().min(1).max(50).default(10),
+});
+
+export const treasuryMovementsQuerySchema = Joi.object({
+  from: reconciliationDate,
+  to: reconciliationDate,
+  asset: Joi.string().valid("liquidity", "wallet").default("liquidity"),
+  page: Joi.number().integer().min(1).default(1),
+  size: Joi.number().integer().min(1).max(50).default(20),
+});
+
+export const closeReconciliationSchema = Joi.object({
+  date: reconciliationDate,
+  actualLiquidity: Joi.number().integer().min(0).required(),
+  actualWalletBalance: Joi.number().integer().min(0).required(),
+  notes: Joi.string().max(1000).allow("").optional(),
+});

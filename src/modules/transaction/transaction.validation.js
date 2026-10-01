@@ -75,3 +75,15 @@ export const settleTransactionSchema = Joi.object({
     "number.min": "قيمة السداد يجب أن تكون أكبر من صفر.",
   }),
 });
+
+export const reverseTransactionSchema = Joi.object({
+  reason: Joi.string().trim().max(500).optional().allow(""),
+});
+
+export const correctTransactionSchema = Joi.object({
+  targetStage: Joi.string()
+    .valid(...Object.values(OperationStage))
+    .required()
+    .messages({ "any.required": "لازم تختار المرحلة الصحيحة للعملية." }),
+  reason: Joi.string().trim().max(500).optional().allow(""),
+});

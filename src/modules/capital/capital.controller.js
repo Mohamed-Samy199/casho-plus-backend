@@ -52,3 +52,29 @@ export const getMyBalanceHistoryHandler = asyncHandler(async (req, res) => {
   const history = await capitalService.getMyBalanceHistory(req.user._id, req.query.limit);
   return ApiResponse.ok(res, "تم جلب سجل رصيدك المالي بنجاح.", history);
 });
+
+export const getDailyReconciliationHandler = asyncHandler(async (req, res) => {
+  const report = await capitalService.getDailyReconciliation(req.query.date);
+  return ApiResponse.ok(res, "تم جلب تقرير التقفيل اليومي بنجاح.", report);
+});
+
+export const listDailyReconciliationsHandler = asyncHandler(async (req, res) => {
+  const history = await capitalService.listDailyReconciliations(req.query);
+  return ApiResponse.ok(res, "تم جلب سجل التقفيلات اليومية بنجاح.", history);
+});
+
+export const getTreasuryMovementsHandler = asyncHandler(async (req, res) => {
+  const report = await capitalService.getTreasuryMovements(req.query);
+  return ApiResponse.ok(res, "تم جلب تقرير حركة الخزينة بنجاح.", report);
+});
+
+export const closeDailyReconciliationHandler = asyncHandler(async (req, res) => {
+  const report = await capitalService.closeDailyReconciliation({
+    dateKey: req.body.date,
+    actualLiquidity: req.body.actualLiquidity,
+    actualWalletBalance: req.body.actualWalletBalance,
+    notes: req.body.notes,
+    userId: req.user._id,
+  });
+  return ApiResponse.created(res, "تم تقفيل اليوم وتسجيل الفروقات بنجاح.", report);
+});

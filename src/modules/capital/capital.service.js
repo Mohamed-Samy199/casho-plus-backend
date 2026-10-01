@@ -4,8 +4,203 @@ import Partner from "../../models/Partner.model.js";
 import User from "../../models/User.model.js";
 import Debt from "../../models/Debt.model.js";
 import BalanceAdjustment from "../../models/BalanceAdjustment.model.js";
+import InternalTransfer from "../../models/InternalTransfer.model.js";
+import Transaction from "../../models/Transaction.model.js";
+import DailyReconciliation from "../../models/DailyReconciliation.model.js";
 import { ApiError } from "../../utils/ApiError.js";
 import { Channel, DebtDirection, DebtStatus } from "../../utils/common/index.js";
+
+function getDayRange(dateKey) {
+  const start = new Date(`${dateKey}T00:00:00.000Z`);
+  const end = new Date(`${dateKey}T23:59:59.999Z`);
+  if (Number.isNaN(start.getTime())) throw ApiError.badRequest("تاريخ التقفيل غير صحيح.");
+  return { start, end };
+}
+
+async function buildDailyReconciliation(dateKey) {
+  const { start, end } = getDayRange(dateKey);
+  const dateFilter = { createdAt: { $gte: start, $lte: end } };
+  const [walletTotals, transactionTotals, adjustmentTotals, transferCount] = await Promise.all([
+    Wallet.aggregate([
+      { $group: { _id: null, liquidity: { $sum: "$liquidityBalance" }, wallet: { $sum: "$walletBalance" } } },
+    ]),
+    Transaction.aggregate([
+      { $match: dateFilter },
+      { $group: {
+        _id: null,
+        count: { $sum: 1 },
+        liquidity: { $sum: "$liquidityEffect" },
+        wallet: { $sum: "$walletEffect" },
+      } },
+    ]),
+    BalanceAdjustment.aggregate([
+      { $match: dateFilter },
+      { $group: {
+        _id: null,
+        liquidity: { $sum: "$liquidityAmount" },
+        wallet: { $sum: "$walletAmount" },
+      } },
+    ]),
+    InternalTransfer.countDocuments(dateFilter),
+  ]);
+
+  const current = walletTotals[0] || { liquidity: 0, wallet: 0 };
+  const transactions = transactionTotals[0] || { count: 0, liquidity: 0, wallet: 0 };
+  const adjustments = adjustmentTotals[0] || { liquidity: 0, wallet: 0 };
+  const openingLiquidity = current.liquidity - transactions.liquidity - adjustments.liquidity;
+  const openingWalletBalance = current.wallet - transactions.wallet - adjustments.wallet;
+
+  return {
+    dateKey,
+    transactionCount: transactions.count,
+    openingLiquidity,
+    openingWalletBalance,
+    transactionLiquidityEffect: transactions.liquidity,
+    transactionWalletEffect: transactions.wallet,
+    adjustmentLiquidityEffect: adjustments.liquidity,
+    adjustmentWalletEffect: adjustments.wallet,
+    transferCount,
+    expectedLiquidity: current.liquidity,
+    expectedWalletBalance: current.wallet,
+  };
+}
+
+export async function getDailyReconciliation(dateKey) {
+  const existing = await DailyReconciliation.findOne({ dateKey }).populate("closedBy", "name").lean();
+  if (existing?.status === "closed") return existing;
+  const report = await buildDailyReconciliation(dateKey);
+  return { ...report, status: "open" };
+}
+
+export async function closeDailyReconciliation({ dateKey, date, actualLiquidity, actualWalletBalance, notes, userId }) {
+  const effectiveDateKey = dateKey || date;
+  const report = await buildDailyReconciliation(effectiveDateKey);
+  const existing = await DailyReconciliation.findOne({ dateKey: effectiveDateKey }).lean();
+  if (existing?.status === "closed") throw ApiError.conflict("تم تقفيل هذا اليوم بالفعل ولا يمكن تعديله.");
+
+  const closed = await DailyReconciliation.findOneAndUpdate(
+    { dateKey: effectiveDateKey },
+    {
+      ...report,
+      status: "closed",
+      actualLiquidity,
+      actualWalletBalance,
+      liquidityVariance: actualLiquidity - report.expectedLiquidity,
+      walletVariance: actualWalletBalance - report.expectedWalletBalance,
+      notes,
+      closedBy: userId,
+      closedAt: new Date(),
+    },
+    { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true }
+  ).populate("closedBy", "name");
+
+  return closed.toObject();
+}
+
+export async function listDailyReconciliations({ page = 1, size = 10 } = {}) {
+  const currentPage = Math.max(1, Number(page) || 1);
+  const pageSize = Math.min(50, Math.max(1, Number(size) || 10));
+  const [result, total] = await Promise.all([
+    DailyReconciliation.find({ status: "closed" })
+      .populate("closedBy", "name")
+      .sort({ dateKey: -1 })
+      .skip((currentPage - 1) * pageSize)
+      .limit(pageSize)
+      .lean(),
+    DailyReconciliation.countDocuments({ status: "closed" }),
+  ]);
+
+  return {
+    result,
+    total,
+    currentPage,
+    pages: Math.ceil(total / pageSize),
+    limit: pageSize,
+  };
+
+}
+
+function getTreasuryRange(from, to) {
+  const start = new Date(`${from}T00:00:00.000Z`);
+  const end = new Date(`${to}T23:59:59.999Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) {
+    throw ApiError.badRequest("فترة تقرير الخزينة غير صحيحة.");
+  }
+  return { start, end };
+}
+
+const TREASURY_STAGE_LABELS = {
+  withdraw_liquidity: "سحب خارج السيولة",
+  deposit_liquidity: "إيداع داخل السيولة",
+  withdraw_wallet_balance: "سحب خارج رصيد المحفظة",
+  deposit_wallet_balance: "إيداع داخل رصيد المحفظة",
+};
+
+export async function getTreasuryMovements({ from, to, asset = "liquidity", page = 1, size = 20 } = {}) {
+  if (!["liquidity", "wallet"].includes(asset)) throw ApiError.badRequest("نوع الرصيد غير صحيح.");
+  const { start, end } = getTreasuryRange(from, to);
+  const currentPage = Math.max(1, Number(page) || 1);
+  const pageSize = Math.min(50, Math.max(1, Number(size) || 20));
+  const periodFilter = { createdAt: { $gte: start, $lte: end } };
+  const sinceStartFilter = { createdAt: { $gte: start } };
+  const effectField = asset === "liquidity" ? "liquidityEffect" : "walletEffect";
+  const adjustmentField = asset === "liquidity" ? "liquidityAmount" : "walletAmount";
+  const balanceField = asset === "liquidity" ? "liquidity" : "wallet";
+  const adjustmentAfterField = asset === "liquidity" ? "liquidityAfter" : "walletAfter";
+
+  const [walletTotals, allTransactions, allAdjustments, periodTransactions, periodAdjustments, periodTransfers] = await Promise.all([
+    Wallet.aggregate([{ $group: { _id: null, [balanceField]: { $sum: `$${balanceField}Balance` } } }]),
+    Transaction.find(sinceStartFilter).select(`referenceNumber stage ${effectField} createdAt createdBy notes`).populate("createdBy", "name").lean(),
+    BalanceAdjustment.find(sinceStartFilter).select(`mode ${adjustmentField} createdAt createdBy note`).populate("createdBy", "name").lean(),
+    Transaction.find(periodFilter).select(`referenceNumber stage ${effectField} createdAt createdBy notes`).populate("createdBy", "name").lean(),
+    BalanceAdjustment.find(periodFilter).select(`mode ${adjustmentField} ${adjustmentAfterField} createdAt createdBy note`).populate("createdBy", "name").lean(),
+    InternalTransfer.find({ ...periodFilter, asset }).select("amount notes createdAt createdBy").populate("createdBy", "name").lean(),
+  ]);
+
+  const currentBalance = walletTotals[0]?.[balanceField] || 0;
+  const effectsSinceStart = allTransactions.reduce((sum, item) => sum + (item[effectField] || 0), 0) + allAdjustments.reduce((sum, item) => sum + (item[adjustmentField] || 0), 0);
+  const openingBalance = currentBalance - effectsSinceStart;
+  const movements = [
+    ...periodTransactions.map((item) => {
+      const amount = item[effectField] || 0;
+      return {
+        id: String(item._id), createdAt: item.createdAt, referenceNumber: item.referenceNumber, kind: "transaction",
+        description: item.notes || TREASURY_STAGE_LABELS[item.stage] || "عملية مالية",
+        stage: item.stage, amount, inflow: Math.max(0, amount), outflow: Math.max(0, -amount), createdBy: item.createdBy,
+      };
+    }),
+    ...periodAdjustments.map((item) => {
+      const amount = item[adjustmentField] || 0;
+      return {
+        id: String(item._id), createdAt: item.createdAt, referenceNumber: null, kind: "adjustment",
+        description: item.note || (item.mode === "opening" ? "رصيد افتتاحي" : "إضافة رصيد"),
+        amount, inflow: Math.max(0, amount), outflow: Math.max(0, -amount), createdBy: item.createdBy,
+      };
+    }),
+    ...periodTransfers.map((item) => ({
+      id: String(item._id), createdAt: item.createdAt, referenceNumber: null, kind: "internal_transfer",
+      description: item.notes || `تحويل داخلي لـ${asset === "liquidity" ? "السيولة" : "رصيد المحافظ"} — لا يغير إجمالي الرصيد`,
+      amount: 0, inflow: 0, outflow: 0, transferAmount: item.amount || 0, createdBy: item.createdBy,
+    })),
+  ].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+
+  let runningBalance = openingBalance;
+  const detailedMovements = movements.map((movement) => {
+    runningBalance += movement.amount;
+    return { ...movement, balanceAfter: runningBalance };
+  });
+  const inflow = detailedMovements.reduce((sum, item) => sum + item.inflow, 0);
+  const outflow = detailedMovements.reduce((sum, item) => sum + item.outflow, 0);
+  const offset = (currentPage - 1) * pageSize;
+  return {
+    from, to, asset, openingBalance, inflow, outflow, closingBalance: openingBalance + inflow - outflow, currentBalance,
+    internalTransferCount: periodTransfers.length,
+    internalTransferAmount: periodTransfers.reduce((sum, item) => sum + (item.amount || 0), 0),
+    total: detailedMovements.length, currentPage, pages: Math.ceil(detailedMovements.length / pageSize), limit: pageSize,
+    chart: detailedMovements.map(({ id, createdAt, balanceAfter }) => ({ id, createdAt, balanceAfter })),
+    result: detailedMovements.slice(offset, offset + pageSize),
+  };
+}
 
 /**
  * ملخص رأس المال الكلي:

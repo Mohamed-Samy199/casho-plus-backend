@@ -8,7 +8,8 @@
     "start": "node index.js",
     "dev": "nodemon index.js",
     "dev:debug": "DEBUG=* nodemon index.js",
-    "seed": "node src/seed.js"
+    "seed": "node src/seed.js",
+    "migrate:transaction-references": "node scripts/migrate-transaction-references.js"
   },
   "keywords": [],
   "author": "",
@@ -30,8 +31,7 @@
     "morgan": "^1.10.1",
     "multer": "^2.1.1",
     "nodemailer": "^8.0.7",
-    "socket.io": "^4.8.3",
-    "xss": "^1.0.15"
+    "socket.io": "^4.8.3"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"
