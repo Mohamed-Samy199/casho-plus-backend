@@ -1,8 +1,23 @@
 import mongoose from "mongoose";
+import crypto from "crypto";
 import { Channel, OperationStage, PartyType } from "../utils/common/index.js";
+
+function createReferenceNumber() {
+  const date = new Date().toISOString().slice(0, 10).replaceAll("-", "");
+  const suffix = crypto.randomBytes(4).toString("hex").toUpperCase();
+  return `CP-${date}-${suffix}`;
+}
 
 const transactionSchema = new mongoose.Schema(
   {
+    referenceNumber: {
+      type: String,
+      required: true,
+      unique: true,
+      immutable: true,
+      trim: true,
+      default: createReferenceNumber,
+    },
     // صاحب المحفظة التي تأثرت: شريك أو أدمن/مستخدم
     partner: { type: mongoose.Schema.Types.ObjectId, ref: "Partner" },
     ownerType: { type: String, enum: ["Partner", "User"], default: "Partner" },
@@ -60,6 +75,12 @@ const transactionSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// حماية إضافية: حتى لو أُنشئت العملية من مسار آخر غير service، لا نسمح
+// بحفظ عملية جديدة بدون رقم مرجعي قابل للعرض والبحث.
+transactionSchema.pre("validate", function ensureReferenceNumber() {
+  if (!this.referenceNumber) this.referenceNumber = createReferenceNumber();
+});
 
 transactionSchema.index({ partyType: 1, partyId: 1, createdAt: -1 });
 transactionSchema.index({ partner: 1, channel: 1, phoneNumber: 1, createdAt: -1 });

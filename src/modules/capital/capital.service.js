@@ -196,8 +196,8 @@ export async function getTreasuryMovements({ from, to, asset = "liquidity", page
     from, to, asset, openingBalance, inflow, outflow, closingBalance: openingBalance + inflow - outflow, currentBalance,
     internalTransferCount: periodTransfers.length,
     internalTransferAmount: periodTransfers.reduce((sum, item) => sum + (item.amount || 0), 0),
+    chart: detailedMovements.map(({ createdAt, balanceAfter }) => ({ createdAt, balanceAfter })),
     total: detailedMovements.length, currentPage, pages: Math.ceil(detailedMovements.length / pageSize), limit: pageSize,
-    chart: detailedMovements.map(({ id, createdAt, balanceAfter }) => ({ id, createdAt, balanceAfter })),
     result: detailedMovements.slice(offset, offset + pageSize),
   };
 }
