@@ -217,13 +217,13 @@ export async function getTreasuryMovements({ from, to, asset = "liquidity", page
   const [walletTotals, walletChannelTotals, allTransactions, allAdjustments, allExpenses, allPendingFunds, periodTransactions, periodAdjustments, periodExpenses, periodPendingFunds, periodTransfers] = await Promise.all([
     Wallet.aggregate([{ $group: { _id: null, [balanceField]: { $sum: `$${balanceField}Balance` } } }]),
     Wallet.aggregate([{ $group: { _id: "$channel", balance: { $sum: `$${balanceField}Balance` } } }]),
-    Transaction.find(sinceStartFilter).select(`referenceNumber stage ${effectField} createdAt createdBy notes`).populate("createdBy", "name").lean(),
+    Transaction.find(sinceStartFilter).select(`referenceNumber stage channel phoneNumber ownerType owner ${effectField} createdAt createdBy notes`).populate("createdBy", "name").populate("owner", "name").lean(),
     BalanceAdjustment.find(sinceStartFilter).select(`mode ${adjustmentField} createdAt createdBy note`).populate("createdBy", "name").lean(),
-    Expense.find({ balanceType: asset, "movements.createdAt": { $gte: start } }).select("category description assetName balanceType movements").populate("movements.createdBy", "name").lean(),
+    Expense.find({ balanceType: asset, "movements.createdAt": { $gte: start } }).select("category description assetName balanceType sourceOwnerType sourceOwner sourcePhoneNumber movements").populate("sourceOwner", "name").populate("movements.createdBy", "name").lean(),
     asset === "wallet" ? PendingFund.find({ "movements.createdAt": { $gte: start } }).select("movements").populate("movements.createdBy", "name").lean() : [],
-    Transaction.find(periodFilter).select(`referenceNumber stage ${effectField} createdAt createdBy notes`).populate("createdBy", "name").lean(),
+    Transaction.find(periodFilter).select(`referenceNumber stage channel phoneNumber ownerType owner ${effectField} createdAt createdBy notes`).populate("createdBy", "name").populate("owner", "name").lean(),
     BalanceAdjustment.find(periodFilter).select(`mode ${adjustmentField} ${adjustmentAfterField} createdAt createdBy note`).populate("createdBy", "name").lean(),
-    Expense.find({ balanceType: asset, "movements.createdAt": { $gte: start, $lte: end } }).select("category description assetName balanceType movements").populate("movements.createdBy", "name").lean(),
+    Expense.find({ balanceType: asset, "movements.createdAt": { $gte: start, $lte: end } }).select("category description assetName balanceType sourceOwnerType sourceOwner sourcePhoneNumber movements").populate("sourceOwner", "name").populate("movements.createdBy", "name").lean(),
     asset === "wallet" ? PendingFund.find({ "movements.createdAt": { $gte: start, $lte: end } }).select("movements").populate("movements.createdBy", "name").lean() : [],
     InternalTransfer.find({ ...periodFilter, asset }).select("amount notes createdAt createdBy").populate("createdBy", "name").lean(),
   ]);
@@ -240,7 +240,7 @@ export async function getTreasuryMovements({ from, to, asset = "liquidity", page
       return {
         id: String(item._id), createdAt: item.createdAt, referenceNumber: item.referenceNumber, kind: "transaction",
         description: item.notes || TREASURY_STAGE_LABELS[item.stage] || "عملية مالية",
-        stage: item.stage, amount, inflow: Math.max(0, amount), outflow: Math.max(0, -amount), createdBy: item.createdBy,
+        stage: item.stage, channel: item.channel, phoneNumber: item.phoneNumber, accountName: item.owner?.name, amount, inflow: Math.max(0, amount), outflow: Math.max(0, -amount), createdBy: item.createdBy,
       };
     }),
     ...periodAdjustments.map((item) => {
@@ -259,7 +259,7 @@ export async function getTreasuryMovements({ from, to, asset = "liquidity", page
       const label = item.category === "asset" ? `بيع/شراء أصل: ${item.assetName || item.description}` : item.category === "advance" ? `سُلفة: ${item.description}` : `خارج: ${item.description}`;
       return {
         id: `${item._id}-expense-${index}`, createdAt: movement.createdAt, referenceNumber: null, kind: "expense",
-        description: label, amount, inflow: Math.max(0, amount), outflow: Math.max(0, -amount), createdBy: movement.createdBy,
+        description: label, channel: item.balanceType === "wallet" ? "wallet" : null, phoneNumber: item.sourcePhoneNumber, accountName: item.sourceOwner?.name, amount, inflow: Math.max(0, amount), outflow: Math.max(0, -amount), createdBy: movement.createdBy,
       };
     })),
     ...periodPendingFunds.flatMap((item) => item.movements.filter((movement) => {
@@ -292,6 +292,8 @@ export async function getTreasuryMovements({ from, to, asset = "liquidity", page
     chart: detailedMovements.map(({ createdAt, balanceAfter }) => ({ createdAt, balanceAfter })),
     total: detailedMovements.length, currentPage, pages: Math.ceil(detailedMovements.length / pageSize), limit: pageSize,
     result: detailedMovements.slice(offset, offset + pageSize),
+    inflowDetails: detailedMovements.filter((item) => item.inflow > 0),
+    outflowDetails: detailedMovements.filter((item) => item.outflow > 0),
   };
 }
 
