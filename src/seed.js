@@ -34,8 +34,15 @@ const defaultVodafoneCashRules = [
   },
 ];
 
+const defaultInstapayRules = Object.values(OperationStage).map((stage) => ({
+  channel: Channel.INSTAPAY,
+  stage,
+  type: "flat",
+  flatAmount: 500, // 5 جنيه افتراضيًا، ويمكن تغييره من الإعدادات أو العملية نفسها
+}));
+
 async function seedCommissionRules() {
-  for (const rule of defaultVodafoneCashRules) {
+  for (const rule of [...defaultVodafoneCashRules, ...defaultInstapayRules]) {
     await CommissionRule.findOneAndUpdate(
       { channel: rule.channel, stage: rule.stage },
       rule,

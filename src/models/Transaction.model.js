@@ -55,6 +55,12 @@ const transactionSchema = new mongoose.Schema(
       {
         amount: { type: Number, required: true, min: 1 },
         lateCommission: { type: Number, default: 0, min: 0 },
+        commission: { type: Number, default: 0, min: 0 },
+        paymentMethod: { type: String, enum: ["liquidity", "vodafone_cash", "instapay"] },
+        wallet: { type: mongoose.Schema.Types.ObjectId, ref: "Wallet" },
+        ownerType: { type: String, enum: ["Partner", "User"] },
+        owner: { type: mongoose.Schema.Types.ObjectId, refPath: "ownerType" },
+        phoneNumber: { type: String, trim: true },
         paidAt: { type: Date, default: Date.now },
         createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
       },
@@ -62,6 +68,8 @@ const transactionSchema = new mongoose.Schema(
 
     notes: { type: String, trim: true },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    updateReason: { type: String, trim: true, maxlength: 500 },
 
     // Reversals are new transactions; these fields keep the audit trail on the original.
     reversalOf: { type: mongoose.Schema.Types.ObjectId, ref: "Transaction" },

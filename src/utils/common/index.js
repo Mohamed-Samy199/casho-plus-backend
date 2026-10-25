@@ -2,6 +2,7 @@
 export const UserRole = Object.freeze({
   ADMIN: "admin",
   EMPLOYEE: "employee",
+  PARTNER: "partner",
 });
 
 // ── Client Type ─────────────────────────────────────────────
@@ -13,7 +14,7 @@ export const ClientType = Object.freeze({
 // ── Payment Channel (فودافون كاش بس دلوقتي، والباقي هيتضاف لاحقًا) ──
 export const Channel = Object.freeze({
   VODAFONE_CASH: "vodafone_cash",
-  // INSTAPAY: "instapay",       // لاحقًا
+  INSTAPAY: "instapay",
   // WALLET: "wallet",           // لاحقًا
 });
 

@@ -13,6 +13,7 @@ import {
   reconciliationHistoryQuerySchema,
   treasuryMovementsQuerySchema,
   closeReconciliationSchema,
+  addChannelSchema,
 } from "./capital.validation.js";
 
 const router = Router();
@@ -57,6 +58,11 @@ router.post(
   "/balance-adjustments",
   validate(balanceAdjustmentSchema),
   capitalController.adjustBalanceHandler
+);
+router.post(
+  "/wallet-channels",
+  validate(addChannelSchema),
+  capitalController.addWalletChannelHandler
 );
 router.get(
   "/balance-history",

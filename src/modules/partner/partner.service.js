@@ -29,16 +29,8 @@ export async function createPartner({ name, phoneNumbers, createAccount = false,
     data: { name, phoneNumbers, createdBy: userId },
   });
 
-  // كل رقم للشريك له Wallet مستقلة من لحظة تسجيله، حتى قبل أول عملية.
-  if (phoneNumbers?.length) {
-    await Wallet.insertMany(
-      phoneNumbers.map((phoneNumber) => ({
-        partner: partner._id,
-        channel: Channel.VODAFONE_CASH,
-        phoneNumber,
-      }))
-    );
-  }
+  // الرقم لا يعني تلقائيًا أن عليه فودافون كاش أو إنستا باي.
+  // تُنشأ محفظة القناة عند أول إضافة رصيد أو تسجيل عملية عليها.
 
   let account = null;
   if (createAccount) {
@@ -46,7 +38,7 @@ export async function createPartner({ name, phoneNumbers, createAccount = false,
       name,
       phoneNumbers,
       password,
-      role: UserRole.ADMIN,
+      role: UserRole.PARTNER,
       partner: partner._id,
       createdBy: userId,
     });
@@ -65,14 +57,22 @@ export async function createPartnerAccount(partnerId, password, adminId) {
   const existingAccount = await User.findOne({ partner: partnerId }).lean();
   if (existingAccount) throw ApiError.conflict("الشريك لديه حساب دخول بالفعل.");
 
-  const existingUser = await User.findOne({ phoneNumbers: { $in: phoneNumbers } }).lean();
-  if (existingUser) throw ApiError.conflict("رقم الهاتف مستخدم بالفعل مع حساب دخول آخر.");
+  const existingUser = await User.findOne({ phoneNumbers: { $in: phoneNumbers } });
+  if (existingUser) {
+    if (existingUser.partner && String(existingUser.partner) !== String(partnerId)) {
+      throw ApiError.conflict("رقم الهاتف مرتبط بحساب شريك آخر.");
+    }
+    existingUser.partner = partnerId;
+    existingUser.role = UserRole.PARTNER;
+    await existingUser.save();
+    return existingUser.toSafeObject();
+  }
 
   const account = await User.create({
     name: partner.name,
     phoneNumbers,
     password,
-    role: UserRole.ADMIN,
+    role: UserRole.PARTNER,
     partner: partner._id,
     createdBy: adminId,
   });
@@ -103,11 +103,15 @@ export async function getPartnerDetails(id) {
 
   const totalLiquidity = lines.reduce((sum, l) => sum + l.liquidityBalance, 0);
   const totalWalletBalance = lines.reduce((sum, l) => sum + l.walletBalance, 0);
+  const walletBalanceByChannel = lines.reduce((totals, line) => ({
+    ...totals,
+    [line.channel]: (totals[line.channel] || 0) + line.walletBalance,
+  }), {});
   const account = await User.findOne({ partner: id })
     .select("name phoneNumbers email role isActive lastLoginAt")
     .lean();
 
-  return { ...partner, lines, totalLiquidity, totalWalletBalance, account };
+  return { ...partner, lines, totalLiquidity, totalWalletBalance, walletBalanceByChannel, account };
 }
 
 export async function updatePartner(id, { name, isActive }) {
@@ -131,11 +135,7 @@ export async function addPhoneNumber(partnerId, phone) {
   partner.phoneNumbers = [...(partner.phoneNumbers || []), phone];
   await partner.save();
 
-  await Wallet.create({
-    partner: partner._id,
-    channel: Channel.VODAFONE_CASH,
-    phoneNumber: phone,
-  });
+  // القنوات اختيارية لكل رقم، وتُنشأ عند أول استخدام فعلي لها.
 
   return partner;
 }
@@ -144,18 +144,18 @@ export async function removePhoneNumber(partnerId, phone) {
   const partner = await findById({ model: Partner, id: partnerId, options: { lean: false } });
   if (!partner) throw ApiError.notFound("الشريك غير موجود.");
 
-  const wallet = await Wallet.findOne({
+  const wallets = await Wallet.find({
     partner: partnerId,
     phoneNumber: phone,
   });
-  if (wallet && (wallet.liquidityBalance > 0 || wallet.walletBalance > 0)) {
+  if (wallets.some((wallet) => wallet.liquidityBalance > 0 || wallet.walletBalance > 0)) {
     throw ApiError.badRequest("لا يمكن حذف رقم عليه رصيد. صفّر الرصيد أولًا.");
   }
 
   partner.phoneNumbers = (partner.phoneNumbers || []).filter((p) => p !== phone);
   await partner.save();
 
-  if (wallet) await Wallet.deleteOne({ _id: wallet._id });
+  await Wallet.deleteMany({ partner: partnerId, phoneNumber: phone });
 
   return partner;
 }

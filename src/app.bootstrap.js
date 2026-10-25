@@ -18,6 +18,8 @@ import notificationRoutes from "./modules/notification/notification.routes.js";
 import attendanceRoutes from "./modules/attendance/attendance.routes.js";
 import internalTransferRoutes from "./modules/internal-transfer/internal-transfer.routes.js";
 import noteRoutes from "./modules/note/note.routes.js";
+import expenseRoutes from "./modules/expense/expense.routes.js";
+import pendingFundRoutes from "./modules/pending-fund/pending-fund.routes.js";
 import { UPLOADS_ROOT } from "./middlewares/upload.middleware.js";
 
 import { ApiError } from "./utils/ApiError.js";
@@ -90,6 +92,8 @@ app.use("/api/notifications", notificationRoutes);
 app.use("/api/attendance", attendanceRoutes);
 app.use("/api/internal-transfers", internalTransferRoutes);
 app.use("/api/notes", noteRoutes);
+app.use("/api/expenses", expenseRoutes);
+app.use("/api/pending-funds", pendingFundRoutes);
 
 app.get("/api/health", (req, res) => {
   res.status(200).json({ success: true, message: "نظام Casho Plus شغال." });

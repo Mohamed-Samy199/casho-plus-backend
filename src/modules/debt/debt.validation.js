@@ -3,7 +3,7 @@ import { PartyType, DebtDirection, Channel, BalanceType } from "../../utils/comm
 
 export const createDebtSchema = Joi.object({
   partyType: Joi.string()
-    .valid(...Object.values(PartyType))
+    .valid(...Object.values(PartyType), "User")
     .required(),
   partyId: Joi.string().hex().length(24).required().messages({
     "any.required": "الطرف المرتبط بالدين مطلوب.",
@@ -52,7 +52,7 @@ export const repayDebtSchema = Joi.object({
 
 export const listDebtsSchema = Joi.object({
   partyType: Joi.string()
-    .valid(...Object.values(PartyType))
+    .valid(...Object.values(PartyType), "User")
     .optional(),
   partyId: Joi.string().hex().length(24).optional(),
   direction: Joi.string()

@@ -29,6 +29,13 @@ export const balanceAdjustmentSchema = Joi.object({
 // إضافة رصيد للأدمن: ownerId يتم أخذه من req.user داخل controller، وليس من body.
 export const myBalanceAdjustmentSchema = Joi.object(adjustmentFields);
 
+export const addChannelSchema = Joi.object({
+  ownerType: Joi.string().valid("User", "Partner").required(),
+  ownerId: Joi.string().hex().length(24).required(),
+  channel: Joi.string().valid(...Object.values(Channel)).required(),
+  phoneNumber,
+});
+
 export const balanceHistoryQuerySchema = Joi.object({
   partnerId: Joi.string().hex().length(24).optional(),
   phoneNumber: Joi.string().pattern(/^01[0-9]{9}$/).optional(),

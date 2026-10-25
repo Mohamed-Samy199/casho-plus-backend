@@ -1,6 +1,7 @@
 import CommissionRule from "../../models/CommissionRule.model.js";
 import { ApiError } from "../../utils/ApiError.js";
 import { findOne, find, findOneAndUpdate } from "../../db/database.repository.js";
+import { Channel } from "../../utils/common/index.js";
 
 /**
  * بيرجع قيمة العمولة الافتراضية لقناة/مرحلة معينة ومبلغ معين.
@@ -13,7 +14,9 @@ export async function resolveDefaultCommission({ channel, stage, amount }) {
     options: { lean: true },
   });
 
-  if (!rule) return 0;
+  // إنستا باي يبدأ افتراضيًا من 5 جنيه لكل عملية، ويمكن تغييره
+  // بقاعدة محفوظة أو تمريره صراحة من نموذج العملية.
+  if (!rule) return channel === Channel.INSTAPAY ? 500 : 0;
 
   if (rule.type === "flat") return rule.flatAmount;
 

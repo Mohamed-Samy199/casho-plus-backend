@@ -74,6 +74,12 @@ export const settleTransactionSchema = Joi.object({
     "any.required": "قيمة السداد مطلوبة.",
     "number.min": "قيمة السداد يجب أن تكون أكبر من صفر.",
   }),
+  commission: Joi.number().integer().min(0).default(0),
+  paymentMethod: Joi.string().valid("liquidity", "vodafone_cash", "instapay").default("liquidity"),
+  walletId: Joi.string().hex().length(24).optional(),
+  ownerType: Joi.string().valid("Partner", "User").optional(),
+  ownerId: Joi.string().hex().length(24).optional(),
+  phoneNumber: Joi.string().pattern(/^01[0-9]{9}$/).optional(),
 });
 
 export const reverseTransactionSchema = Joi.object({
@@ -81,9 +87,20 @@ export const reverseTransactionSchema = Joi.object({
 });
 
 export const correctTransactionSchema = Joi.object({
-  targetStage: Joi.string()
-    .valid(...Object.values(OperationStage))
-    .required()
-    .messages({ "any.required": "لازم تختار المرحلة الصحيحة للعملية." }),
+  targetStage: Joi.string().valid(...Object.values(OperationStage)).optional(),
+  stage: Joi.string().valid(...Object.values(OperationStage)).optional(),
+  amount: Joi.number().integer().min(1).optional(),
+  commission: Joi.number().integer().min(0).optional(),
+  ownerType: Joi.string().valid("Partner", "User").optional(),
+  ownerId: Joi.string().hex().length(24).optional(),
+  partnerId: Joi.string().hex().length(24).optional(),
+  phoneNumber: Joi.string().pattern(/^01[0-9]{9}$/).optional(),
+  channel: Joi.string().valid(...Object.values(Channel)).optional(),
+  partyType: Joi.string().valid(...Object.values(PartyType)).optional(),
+  partyId: Joi.when("partyType", {
+    is: PartyType.WALK_IN, then: Joi.any().valid(null, "").optional(),
+    otherwise: Joi.string().hex().length(24).optional(),
+  }),
+  notes: Joi.string().trim().max(500).optional().allow(""),
   reason: Joi.string().trim().max(500).optional().allow(""),
 });

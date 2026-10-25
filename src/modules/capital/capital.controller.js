@@ -28,6 +28,11 @@ export const adjustBalanceHandler = asyncHandler(async (req, res) => {
   return ApiResponse.ok(res, "تم تعديل الرصيد وتسجيل العملية بنجاح.", result);
 });
 
+export const addWalletChannelHandler = asyncHandler(async (req, res) => {
+  const wallet = await capitalService.addWalletChannel(req.body);
+  return ApiResponse.created(res, "تمت إضافة القناة للرقم برصيد ابتدائي صفر.", wallet);
+});
+
 export const getBalanceHistoryHandler = asyncHandler(async (req, res) => {
   const history = await capitalService.getBalanceHistory(req.query);
   return ApiResponse.ok(res, "تم جلب سجل تعديلات الأرصدة بنجاح.", history);

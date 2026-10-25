@@ -2,6 +2,7 @@ import Transaction from "../../models/Transaction.model.js";
 import Debt from "../../models/Debt.model.js";
 import { DebtStatus, UserRole } from "../../utils/common/index.js";
 import * as capitalService from "../capital/capital.service.js";
+import PendingFund from "../../models/PendingFund.model.js";
 
 function getTodayRange() {
   const start = new Date();
@@ -61,6 +62,13 @@ async function getDebtsOverview() {
   ]);
 }
 
+async function getPendingFundsOverview() {
+  return PendingFund.aggregate([
+    { $match: { status: { $in: ["pending", "partially_returned"] } } },
+    { $group: { _id: "$recoveryOwner", total: { $sum: "$remainingAmount" }, count: { $sum: 1 } } },
+  ]);
+}
+
 /**
  * ملخص لوحة التحكم — يختلف حسب الدور:
  * - الموظف: عمليات اليوم (عدد بس، من غير مبالغ/أرباح) + آخر العمليات + ملخص الديون
@@ -78,12 +86,17 @@ export async function getDashboard(user) {
   const result = { todayOperations, recentTransactions, debtsOverview };
 
   if (isAdmin) {
-    const [todayFinancials, capitalSummary] = await Promise.all([
+    const todayDateKey = new Date().toISOString().slice(0, 10);
+    const [todayFinancials, capitalSummary, todayReconciliation, pendingFundsOverview] = await Promise.all([
       getTodayFinancials(),
       capitalService.getCapitalSummary(),
+      capitalService.getDailyReconciliation(todayDateKey),
+      getPendingFundsOverview(),
     ]);
     result.todayFinancials = todayFinancials;
     result.capitalSummary = capitalSummary;
+    result.todayReconciliation = todayReconciliation;
+    result.pendingFundsOverview = pendingFundsOverview;
   }
 
   return result;

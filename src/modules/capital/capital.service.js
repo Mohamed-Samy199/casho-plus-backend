@@ -7,6 +7,8 @@ import BalanceAdjustment from "../../models/BalanceAdjustment.model.js";
 import InternalTransfer from "../../models/InternalTransfer.model.js";
 import Transaction from "../../models/Transaction.model.js";
 import DailyReconciliation from "../../models/DailyReconciliation.model.js";
+import Expense from "../../models/Expense.model.js";
+import PendingFund from "../../models/PendingFund.model.js";
 import { ApiError } from "../../utils/ApiError.js";
 import { Channel, DebtDirection, DebtStatus } from "../../utils/common/index.js";
 
@@ -20,9 +22,12 @@ function getDayRange(dateKey) {
 async function buildDailyReconciliation(dateKey) {
   const { start, end } = getDayRange(dateKey);
   const dateFilter = { createdAt: { $gte: start, $lte: end } };
-  const [walletTotals, transactionTotals, adjustmentTotals, transferCount] = await Promise.all([
+  const [walletTotals, walletChannelTotals, transactionTotals, adjustmentTotals, expenseTotals, expenseBreakdownTotals, pendingReturnTotals, pendingFundBreakdownTotals, transferCount] = await Promise.all([
     Wallet.aggregate([
       { $group: { _id: null, liquidity: { $sum: "$liquidityBalance" }, wallet: { $sum: "$walletBalance" } } },
+    ]),
+    Wallet.aggregate([
+      { $group: { _id: "$channel", wallet: { $sum: "$walletBalance" } } },
     ]),
     Transaction.aggregate([
       { $match: dateFilter },
@@ -41,14 +46,57 @@ async function buildDailyReconciliation(dateKey) {
         wallet: { $sum: "$walletAmount" },
       } },
     ]),
+    Expense.aggregate([
+      { $unwind: "$movements" },
+      { $match: { "movements.createdAt": { $gte: start, $lte: end } } },
+      { $group: {
+        _id: null,
+        liquidity: { $sum: { $cond: [{ $eq: ["$balanceType", "liquidity"] }, { $cond: [{ $eq: ["$movements.type", "inflow"] }, "$movements.amount", { $multiply: ["$movements.amount", -1] }] }, 0] } },
+        wallet: { $sum: { $cond: [{ $eq: ["$balanceType", "wallet"] }, { $cond: [{ $eq: ["$movements.type", "inflow"] }, "$movements.amount", { $multiply: ["$movements.amount", -1] }] }, 0] } },
+      } },
+    ]),
+    Expense.aggregate([
+      { $unwind: "$movements" },
+      { $match: { "movements.createdAt": { $gte: start, $lte: end } } },
+      { $group: {
+        _id: { category: "$category", balanceType: "$balanceType" },
+        total: { $sum: { $cond: [{ $eq: ["$movements.type", "inflow"] }, "$movements.amount", { $multiply: ["$movements.amount", -1] }] } },
+      } },
+    ]),
+    PendingFund.aggregate([
+      { $unwind: "$movements" },
+      { $match: { "movements.createdAt": { $gte: start, $lte: end } } },
+      { $group: { _id: null, wallet: { $sum: { $cond: [{ $eq: ["$movements.type", "inflow"] }, "$movements.amount", { $multiply: ["$movements.amount", -1] }] } } } },
+    ]),
+    PendingFund.aggregate([
+      { $unwind: "$movements" },
+      { $match: { "movements.createdAt": { $gte: start, $lte: end } } },
+      { $group: {
+        _id: null,
+        suspended: { $sum: { $cond: [{ $eq: ["$movements.type", "outflow"] }, "$movements.amount", 0] } },
+        returned: { $sum: { $cond: [{ $eq: ["$movements.type", "inflow"] }, "$movements.amount", 0] } },
+      } },
+    ]),
     InternalTransfer.countDocuments(dateFilter),
   ]);
 
   const current = walletTotals[0] || { liquidity: 0, wallet: 0 };
+  const walletByChannel = Object.fromEntries(walletChannelTotals.map((item) => [item._id, item.wallet || 0]));
   const transactions = transactionTotals[0] || { count: 0, liquidity: 0, wallet: 0 };
   const adjustments = adjustmentTotals[0] || { liquidity: 0, wallet: 0 };
-  const openingLiquidity = current.liquidity - transactions.liquidity - adjustments.liquidity;
-  const openingWalletBalance = current.wallet - transactions.wallet - adjustments.wallet;
+  const expenses = expenseTotals[0] || { liquidity: 0, wallet: 0 };
+  const pendingReturns = pendingReturnTotals[0] || { wallet: 0 };
+  const pendingFunds = pendingFundBreakdownTotals[0] || { suspended: 0, returned: 0 };
+  const expenseBreakdown = {};
+  for (const item of expenseBreakdownTotals) {
+    const category = item._id.category;
+    const balanceType = item._id.balanceType;
+    expenseBreakdown[category] ||= { liquidity: 0, wallet: 0, total: 0 };
+    expenseBreakdown[category][balanceType] += item.total || 0;
+    expenseBreakdown[category].total += item.total || 0;
+  }
+  const openingLiquidity = current.liquidity - transactions.liquidity - adjustments.liquidity - expenses.liquidity;
+  const openingWalletBalance = current.wallet - transactions.wallet - adjustments.wallet - expenses.wallet - pendingReturns.wallet;
 
   return {
     dateKey,
@@ -59,15 +107,33 @@ async function buildDailyReconciliation(dateKey) {
     transactionWalletEffect: transactions.wallet,
     adjustmentLiquidityEffect: adjustments.liquidity,
     adjustmentWalletEffect: adjustments.wallet,
+    expenseLiquidityEffect: expenses.liquidity,
+    expenseWalletEffect: expenses.wallet,
+    pendingReturnWalletEffect: pendingReturns.wallet,
+    pendingFundsBreakdown: {
+      suspended: pendingFunds.suspended || 0,
+      returned: pendingFunds.returned || 0,
+      netEffect: (pendingFunds.returned || 0) - (pendingFunds.suspended || 0),
+    },
+    expenseBreakdown,
     transferCount,
     expectedLiquidity: current.liquidity,
     expectedWalletBalance: current.wallet,
+    expectedWalletBalanceByChannel: walletByChannel,
   };
 }
 
 export async function getDailyReconciliation(dateKey) {
   const existing = await DailyReconciliation.findOne({ dateKey }).populate("closedBy", "name").lean();
-  if (existing?.status === "closed") return existing;
+  if (existing?.status === "closed") {
+    const currentReport = await buildDailyReconciliation(dateKey);
+    return {
+      ...existing,
+      expectedWalletBalanceByChannel: existing.expectedWalletBalanceByChannel || currentReport.expectedWalletBalanceByChannel,
+      expenseBreakdown: existing.expenseBreakdown || currentReport.expenseBreakdown,
+      pendingFundsBreakdown: existing.pendingFundsBreakdown || currentReport.pendingFundsBreakdown,
+    };
+  }
   const report = await buildDailyReconciliation(dateKey);
   return { ...report, status: "open" };
 }
@@ -148,17 +214,25 @@ export async function getTreasuryMovements({ from, to, asset = "liquidity", page
   const balanceField = asset === "liquidity" ? "liquidity" : "wallet";
   const adjustmentAfterField = asset === "liquidity" ? "liquidityAfter" : "walletAfter";
 
-  const [walletTotals, allTransactions, allAdjustments, periodTransactions, periodAdjustments, periodTransfers] = await Promise.all([
+  const [walletTotals, walletChannelTotals, allTransactions, allAdjustments, allExpenses, allPendingFunds, periodTransactions, periodAdjustments, periodExpenses, periodPendingFunds, periodTransfers] = await Promise.all([
     Wallet.aggregate([{ $group: { _id: null, [balanceField]: { $sum: `$${balanceField}Balance` } } }]),
+    Wallet.aggregate([{ $group: { _id: "$channel", balance: { $sum: `$${balanceField}Balance` } } }]),
     Transaction.find(sinceStartFilter).select(`referenceNumber stage ${effectField} createdAt createdBy notes`).populate("createdBy", "name").lean(),
     BalanceAdjustment.find(sinceStartFilter).select(`mode ${adjustmentField} createdAt createdBy note`).populate("createdBy", "name").lean(),
+    Expense.find({ balanceType: asset, "movements.createdAt": { $gte: start } }).select("category description assetName balanceType movements").populate("movements.createdBy", "name").lean(),
+    asset === "wallet" ? PendingFund.find({ "movements.createdAt": { $gte: start } }).select("movements").populate("movements.createdBy", "name").lean() : [],
     Transaction.find(periodFilter).select(`referenceNumber stage ${effectField} createdAt createdBy notes`).populate("createdBy", "name").lean(),
     BalanceAdjustment.find(periodFilter).select(`mode ${adjustmentField} ${adjustmentAfterField} createdAt createdBy note`).populate("createdBy", "name").lean(),
+    Expense.find({ balanceType: asset, "movements.createdAt": { $gte: start, $lte: end } }).select("category description assetName balanceType movements").populate("movements.createdBy", "name").lean(),
+    asset === "wallet" ? PendingFund.find({ "movements.createdAt": { $gte: start, $lte: end } }).select("movements").populate("movements.createdBy", "name").lean() : [],
     InternalTransfer.find({ ...periodFilter, asset }).select("amount notes createdAt createdBy").populate("createdBy", "name").lean(),
   ]);
 
   const currentBalance = walletTotals[0]?.[balanceField] || 0;
-  const effectsSinceStart = allTransactions.reduce((sum, item) => sum + (item[effectField] || 0), 0) + allAdjustments.reduce((sum, item) => sum + (item[adjustmentField] || 0), 0);
+  const channelBalances = Object.fromEntries(walletChannelTotals.map((item) => [item._id, item.balance || 0]));
+  const expenseEffect = (items) => items.reduce((sum, item) => sum + item.movements.filter((movement) => new Date(movement.createdAt) >= start).reduce((inner, movement) => inner + (movement.type === "inflow" ? movement.amount : -movement.amount), 0), 0);
+  const pendingReturnEffect = (items) => items.reduce((sum, item) => sum + item.movements.filter((movement) => new Date(movement.createdAt) >= start).reduce((inner, movement) => inner + (movement.type === "inflow" ? movement.amount : -movement.amount), 0), 0);
+  const effectsSinceStart = allTransactions.reduce((sum, item) => sum + (item[effectField] || 0), 0) + allAdjustments.reduce((sum, item) => sum + (item[adjustmentField] || 0), 0) + expenseEffect(allExpenses) + pendingReturnEffect(allPendingFunds);
   const openingBalance = currentBalance - effectsSinceStart;
   const movements = [
     ...periodTransactions.map((item) => {
@@ -177,6 +251,24 @@ export async function getTreasuryMovements({ from, to, asset = "liquidity", page
         amount, inflow: Math.max(0, amount), outflow: Math.max(0, -amount), createdBy: item.createdBy,
       };
     }),
+    ...periodExpenses.flatMap((item) => item.movements.filter((movement) => {
+      const date = new Date(movement.createdAt);
+      return date >= start && date <= end;
+    }).map((movement, index) => {
+      const amount = movement.type === "inflow" ? movement.amount : -movement.amount;
+      const label = item.category === "asset" ? `بيع/شراء أصل: ${item.assetName || item.description}` : item.category === "advance" ? `سُلفة: ${item.description}` : `خارج: ${item.description}`;
+      return {
+        id: `${item._id}-expense-${index}`, createdAt: movement.createdAt, referenceNumber: null, kind: "expense",
+        description: label, amount, inflow: Math.max(0, amount), outflow: Math.max(0, -amount), createdBy: movement.createdBy,
+      };
+    })),
+    ...periodPendingFunds.flatMap((item) => item.movements.filter((movement) => {
+      const date = new Date(movement.createdAt);
+      return date >= start && date <= end;
+    }).map((movement, index) => ({
+      id: `${item._id}-pending-return-${index}`, createdAt: movement.createdAt, referenceNumber: null, kind: "pending_return",
+      description: movement.type === "inflow" ? "إرجاع أموال معلقة" : "تسجيل أموال معلقة", amount: movement.type === "inflow" ? movement.amount : -movement.amount, inflow: movement.type === "inflow" ? movement.amount : 0, outflow: movement.type === "outflow" ? movement.amount : 0, createdBy: movement.createdBy,
+    }))),
     ...periodTransfers.map((item) => ({
       id: String(item._id), createdAt: item.createdAt, referenceNumber: null, kind: "internal_transfer",
       description: item.notes || `تحويل داخلي لـ${asset === "liquidity" ? "السيولة" : "رصيد المحافظ"} — لا يغير إجمالي الرصيد`,
@@ -196,6 +288,7 @@ export async function getTreasuryMovements({ from, to, asset = "liquidity", page
     from, to, asset, openingBalance, inflow, outflow, closingBalance: openingBalance + inflow - outflow, currentBalance,
     internalTransferCount: periodTransfers.length,
     internalTransferAmount: periodTransfers.reduce((sum, item) => sum + (item.amount || 0), 0),
+    channelBalances,
     chart: detailedMovements.map(({ createdAt, balanceAfter }) => ({ createdAt, balanceAfter })),
     total: detailedMovements.length, currentPage, pages: Math.ceil(detailedMovements.length / pageSize), limit: pageSize,
     result: detailedMovements.slice(offset, offset + pageSize),
@@ -220,9 +313,15 @@ export async function getCapitalSummary() {
       },
     },
   ]);
+  const walletChannelsAgg = await Wallet.aggregate([
+    { $group: { _id: "$channel", totalWalletBalance: { $sum: "$walletBalance" } } },
+  ]);
 
   const totalLiquidity = walletsAgg[0]?.totalLiquidity || 0;
   const totalWalletBalance = walletsAgg[0]?.totalWalletBalance || 0;
+  const walletBalanceByChannel = Object.fromEntries(
+    walletChannelsAgg.map((item) => [item._id, item.totalWalletBalance || 0])
+  );
 
   const debtsAgg = await Debt.aggregate([
     { $match: { status: DebtStatus.OPEN } },
@@ -255,6 +354,7 @@ export async function getCapitalSummary() {
     outsideCapital,
     breakdown: {
       totalWalletBalance,
+      walletBalanceByChannel,
       owedToMe,
       owedByMe,
       netDebts,
@@ -262,6 +362,8 @@ export async function getCapitalSummary() {
     contributors: {
       liquidity: sumByName(wallets, "liquidityBalance", "مساهم غير محدد"),
       walletBalance: sumByName(wallets, "walletBalance", "مساهم غير محدد"),
+      walletVodafone: sumByName(wallets.filter((wallet) => wallet.channel === Channel.VODAFONE_CASH), "walletBalance", "مساهم غير محدد"),
+      walletInstapay: sumByName(wallets.filter((wallet) => wallet.channel === Channel.INSTAPAY), "walletBalance", "مساهم غير محدد"),
       owedToMe: sumByName(
         openDebts.filter((debt) => debt.direction === DebtDirection.OWED_TO_ME),
         "remainingAmount",
@@ -355,13 +457,7 @@ export async function adjustBalance({
           : { partner: actualOwnerId, channel, phoneNumber };
       let wallet = await Wallet.findOne(walletFilter).session(session);
       if (!wallet) {
-        wallet = new Wallet({
-          ...(ownerType === "User"
-            ? { ownerType: "User", owner: actualOwnerId }
-            : { partner: actualOwnerId, ownerType: "Partner", owner: actualOwnerId }),
-          channel,
-          phoneNumber,
-        });
+        throw ApiError.badRequest("القناة غير مضافة لهذا الرقم. أضف القناة أولًا من تفاصيل الرقم.");
       }
 
       // السجلات القديمة كانت تحفظ ownerType فقط للشريك؛ نكمل owner تلقائيًا.
@@ -419,6 +515,26 @@ export async function adjustBalance({
   }
 }
 
+export async function addWalletChannel({ ownerType, ownerId, channel, phoneNumber }) {
+  const ownerModel = ownerType === "User" ? User : Partner;
+  const owner = await ownerModel.findById(ownerId).select("name phoneNumbers").lean();
+  if (!owner) throw ApiError.notFound(ownerType === "User" ? "المستخدم غير موجود." : "الشريك غير موجود.");
+  if (!owner.phoneNumbers?.includes(phoneNumber)) {
+    throw ApiError.badRequest("الرقم لا يتبع الحساب المختار.");
+  }
+
+  const walletFilter = ownerType === "User"
+    ? { ownerType: "User", owner: ownerId, channel, phoneNumber }
+    : { ownerType: "Partner", partner: ownerId, channel, phoneNumber };
+  const existing = await Wallet.findOne(walletFilter).lean();
+  if (existing) throw ApiError.conflict("هذه القناة مضافة بالفعل لهذا الرقم.");
+
+  const wallet = await Wallet.create(ownerType === "User"
+    ? { ownerType: "User", owner: ownerId, channel, phoneNumber }
+    : { ownerType: "Partner", partner: ownerId, owner: ownerId, channel, phoneNumber });
+  return { ...wallet.toObject(), ownerName: owner.name, message: "تمت إضافة القناة برصيد ابتدائي صفر." };
+}
+
 export async function getBalanceHistory({ partnerId, phoneNumber, limit = 100 } = {}) {
   const filter = {};
   if (partnerId) filter.partner = partnerId;
@@ -439,6 +555,10 @@ export async function getMyCapital(userId) {
       (summary, wallet) => ({
         liquidity: summary.liquidity + (wallet.liquidityBalance || 0),
         walletBalance: summary.walletBalance + (wallet.walletBalance || 0),
+        walletBalanceByChannel: {
+          ...summary.walletBalanceByChannel,
+          [wallet.channel]: (summary.walletBalanceByChannel[wallet.channel] || 0) + (wallet.walletBalance || 0),
+        },
         lines: [
           ...summary.lines,
           {
@@ -449,7 +569,7 @@ export async function getMyCapital(userId) {
           },
         ],
       }),
-      { liquidity: 0, walletBalance: 0, lines: [] }
+      { liquidity: 0, walletBalance: 0, walletBalanceByChannel: {}, lines: [] }
     );
   }
 
@@ -472,6 +592,10 @@ export async function getMyCapital(userId) {
     (summary, item) => ({
       liquidity: summary.liquidity + (item.liquidityAfter || 0),
       walletBalance: summary.walletBalance + (item.walletAfter || 0),
+      walletBalanceByChannel: {
+        ...summary.walletBalanceByChannel,
+        [item.channel]: (summary.walletBalanceByChannel[item.channel] || 0) + (item.walletAfter || 0),
+      },
       lines: [
         ...summary.lines,
         {
@@ -482,7 +606,7 @@ export async function getMyCapital(userId) {
         },
       ],
     }),
-    { liquidity: 0, walletBalance: 0, lines: [] }
+    { liquidity: 0, walletBalance: 0, walletBalanceByChannel: {}, lines: [] }
   );
 }
 

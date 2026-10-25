@@ -3,8 +3,8 @@ import { PartyType, DebtDirection, DebtStatus } from "../utils/common/index.js";
 
 const debtSchema = new mongoose.Schema(
   {
-    // الطرف المرتبط بالدين (فرد / عميل رئيسي / شريك)
-    partyType: { type: String, enum: Object.values(PartyType), required: true },
+    // الطرف المرتبط بالدين (فرد / عميل رئيسي / شريك / أدمن)
+    partyType: { type: String, enum: [...Object.values(PartyType), "User"], required: true },
     partyId: { type: mongoose.Schema.Types.ObjectId, required: true, refPath: "partyType" },
 
     // ديون عليا (owed_by_me) أو ديون ليا (owed_to_me)

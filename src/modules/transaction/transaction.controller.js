@@ -36,7 +36,7 @@ export const getTransactionHandler = asyncHandler(async (req, res) => {
 export const settleTransactionHandler = asyncHandler(async (req, res) => {
   const result = await transactionService.settleTransaction(
     req.params.id,
-    req.body.amount,
+    req.body,
     req.user._id,
     req.get("Idempotency-Key")
   );
@@ -54,12 +54,11 @@ export const reverseTransactionHandler = asyncHandler(async (req, res) => {
 });
 
 export const correctTransactionHandler = asyncHandler(async (req, res) => {
-  const result = await transactionService.reverseTransaction(
+  const result = await transactionService.updateTransaction(
     req.params.id,
     req.user._id,
-    req.body.reason,
-    req.get("Idempotency-Key"),
-    req.body.targetStage
+    req.body,
+    req.get("Idempotency-Key")
   );
-  return ApiResponse.created(res, "تم تصحيح العملية وتسجيل القيود المرتبطة.", result);
+  return ApiResponse.ok(res, "تم تعديل العملية بنجاح.", result);
 });
