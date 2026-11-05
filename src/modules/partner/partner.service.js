@@ -92,7 +92,16 @@ export async function getPartnerDetails(id) {
   const partner = await findById({ model: Partner, id, options: { lean: true } });
   if (!partner) throw ApiError.notFound("الشريك غير موجود.");
 
-  const wallets = await Wallet.find({ partner: id }).lean();
+  const account = await User.findOne({ partner: id })
+    .select("name phoneNumbers email role isActive lastLoginAt")
+    .lean();
+
+  const walletFilter =
+    account?.role === UserRole.ADMIN
+      ? { ownerType: "User", owner: account._id }
+      : { partner: id };
+
+  const wallets = await Wallet.find(walletFilter).lean();
 
   const lines = wallets.map((w) => ({
     channel: w.channel,
@@ -107,10 +116,6 @@ export async function getPartnerDetails(id) {
     ...totals,
     [line.channel]: (totals[line.channel] || 0) + line.walletBalance,
   }), {});
-  const account = await User.findOne({ partner: id })
-    .select("name phoneNumbers email role isActive lastLoginAt")
-    .lean();
-
   return { ...partner, lines, totalLiquidity, totalWalletBalance, walletBalanceByChannel, account };
 }
 

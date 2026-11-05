@@ -2,6 +2,7 @@ import jwt from "jsonwebtoken";
 import { JWT_SECRET, JWT_EXPIRES_IN } from "../../config/env.config.js";
 import { ApiError } from "../../utils/ApiError.js";
 import User from "../../models/User.model.js";
+import Wallet from "../../models/Wallet.model.js";
 import { UserRole } from "../../utils/common/index.js";
 import { findOne, findById, create, find } from "../../db/database.repository.js";
 
@@ -138,6 +139,32 @@ export const changeUserRole = async (targetUserId, newRole, adminId) => {
   const oldRole = user.role;
   user.role = newRole;
   await user.save();
+
+  // عند تحويل حساب شريك إلى أدمن، ننقل ملكية محافظه إلى حساب User
+  // مع الحفاظ على كل الأرصدة والقنوات وأرقام الهاتف كما هي.
+  if (oldRole === UserRole.PARTNER && newRole === UserRole.ADMIN && user.partner) {
+    await Wallet.updateMany(
+      { partner: user.partner, ownerType: "Partner" },
+      {
+        $set: { ownerType: "User", owner: user._id },
+        $unset: { partner: 1 },
+      }
+    );
+  }
+
+  // عند إعادة الحساب من أدمن إلى شريك، نعيد ملكية المحافظ إلى الشريك.
+  if (oldRole === UserRole.ADMIN && newRole === UserRole.PARTNER && user.partner) {
+    await Wallet.updateMany(
+      { ownerType: "User", owner: user._id },
+      {
+        $set: {
+          ownerType: "Partner",
+          owner: user.partner,
+          partner: user.partner,
+        },
+      }
+    );
+  }
 
   return { user: user.toSafeObject(), oldRole, newRole };
 };

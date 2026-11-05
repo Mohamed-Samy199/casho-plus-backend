@@ -441,6 +441,20 @@ export async function adjustBalance({
   if (liquidityAmount === 0 && walletAmount === 0) {
     throw ApiError.badRequest("يجب إدخال قيمة أكبر من صفر في السيولة أو رصيد المحفظة.");
   }
+
+  // لو الشريك مرتبط بحساب أدمن، استخدم محافظ حساب User بعد نقل الملكية.
+  if (ownerType === "Partner" && partnerId) {
+    const linkedAdmin = await User.findOne({
+      partner: partnerId,
+      role: "admin",
+    }).select("_id").lean();
+
+    if (linkedAdmin) {
+      ownerType = "User";
+      ownerId = linkedAdmin._id;
+    }
+  }
+
   const actualOwnerId = ownerId || partnerId;
   const ownerModel = ownerType === "User" ? User : Partner;
   const owner = await ownerModel.findById(actualOwnerId).lean();
@@ -518,6 +532,20 @@ export async function adjustBalance({
 }
 
 export async function addWalletChannel({ ownerType, ownerId, channel, phoneNumber }) {
+  // تفاصيل الشريك قد تستمر في إرسال Partner بعد تحويل الحساب إلى أدمن.
+  // في هذه الحالة أضف القناة على محفظة User المرتبطة بالشريك.
+  if (ownerType === "Partner") {
+    const linkedAdmin = await User.findOne({
+      partner: ownerId,
+      role: "admin",
+    }).select("_id").lean();
+
+    if (linkedAdmin) {
+      ownerType = "User";
+      ownerId = linkedAdmin._id;
+    }
+  }
+
   const ownerModel = ownerType === "User" ? User : Partner;
   const owner = await ownerModel.findById(ownerId).select("name phoneNumbers").lean();
   if (!owner) throw ApiError.notFound(ownerType === "User" ? "المستخدم غير موجود." : "الشريك غير موجود.");
